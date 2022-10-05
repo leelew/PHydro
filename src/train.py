@@ -5,18 +5,41 @@ import tensorflow_addons as tfa
 from tensorflow.keras.optimizers import Adam
 
 
-def train_shared_layer(X, y, cfg, model, loss_fn, optimizer, data_generator):
+def train_shared_layer(x_train,
+                       y_train,
+                       x_valid,
+                       y_valid,
+                       cfg,
+                       model,
+                       loss_fn,
+                       optimizer,
+                       data_generator,
+                       train_acc_metric,
+                       valid_acc_metric):
     """train shared LSTM layers"""
     for epoch in range(cfg["epochs"]):
         for iter in range(cfg["niters"]):
-            x_batch, y_batch = data_generator(X, y)
+            x_batch, y_batch = data_generator(x_train, y_train)
             with tf.GradientTape(persistent=True) as tape:
                 pred = model(x_batch)
                 loss = loss_fn(y_batch, x_batch)
             train_vars = model.trainable_variables
             grads = tape.gradient(loss, train_vars)
             optimizer.apply_gradients(zip(grads, train_vars))
-    return model    # FIXME: save models #TODO: Add validate process
+            train_acc_metric.update_state(y_batch, pred)
+        train_acc = train_acc_metric.result().numpy()
+        train_acc_metric.reset_states()
+
+    # TODO: Add validate process
+        print("{epoch}: train: {train_acc}, valid: {valid_acc}".format(
+            epoch=epoch, train_acc=round(train_acc, 2), valid_acc=round(val_acc, 2)))
+
+        # save best model
+        if val_acc > best_acc:
+            model.save_weights(
+                cfg["run_dir"] / 'saved_model' / 'model_ft.h5')
+            best_acc = val_acc
+    return model    # FIXME: save models
 
 
 def train_head_layer(X, y, cfg, model, loss_fn, optimizer, data_generator):

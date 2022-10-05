@@ -1,6 +1,9 @@
 import json
+import math
 
 import numpy as np
+import tensorflow as tf
+from sklearn.utils import shuffle
 
 
 class Dataset():
@@ -165,3 +168,32 @@ class Dataset():
 
     def __len__(self):
         return self.nt
+
+
+class DataGenerator(tf.keras.utils.Sequence):
+    def __init__(self, x, y, cfg, shuffle=True):
+        super().__init__()
+        self.x, self.y = x, y  # (ngrid, nt, nfeat)-(ngrid, nt, nout)
+        self.shuffle = shuffle
+        self.batch_size = cfg["batch_size"]
+        self.seq_len = cfg["seq_len"]
+        self.ngrids = x.shape[0]
+        self.nt = x.shape[1]
+
+    def __len__(self):
+        return math.ceil(self.ngrids / self.batch_size)
+
+    def __getitem__(self, idx):
+        # index for grids
+        grid_idx = self.indexes[idx * self.batch_size:(idx+1)*self.batch_size]
+        # index for timestep
+        begin_idx = np.random.randint(0, self.nt-self.seq_len, 1)[0]
+        # crop
+        x_ = self.x[grid_idx, begin_idx:begin_idx+self.seq_len]
+        y_ = self.y[grid_idx, begin_idx+self.seq_len-1]
+        return x_, y_
+
+    def on_epoch_end(self):
+        self.indexes = np.arange(self.ngrids)
+        if self.shuffle:
+            np.random.shuffle(self.indexes)

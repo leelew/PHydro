@@ -45,7 +45,7 @@ def main(cfg):
         mdl_list = train_single_task(
             x_train, y_train, cfg, model, loss_fn, optim, f.make_training_data)
         y_pred = predict_single_task(x_test, mdl_list)
-    elif cfg["model_name"] == "multi_tasks":
+    elif cfg["model_name"] in ["multi_tasks", 'soft_multi_tasks', 'hard_multi_tasks']:
         mdl = train_multi_tasks(
             x_train, y_train, cfg, model, loss_fn, optim, f.make_training_data)
         y_pred = predict_multi_tasks(x_test, mdl)
