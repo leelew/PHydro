@@ -3,7 +3,6 @@ import math
 
 import numpy as np
 import tensorflow as tf
-from sklearn.utils import shuffle
 
 
 class Dataset():
@@ -38,7 +37,7 @@ class Dataset():
         forcing = self._minmax_normalize(forcing, scaler, is_feat=True)
 
         # Optional: normalize output (for train dataset)
-        if self.mode == 'train':
+        if self.mode in ['train', 'valid']:
             hydro = self._minmax_normalize(hydro, scaler, is_feat=False)
             # FIXME: process NaN in forcing, hydro;
             # NOTE: interpolate is not suit for runoff?? discuss with Wei
@@ -48,7 +47,7 @@ class Dataset():
         forcing = np.transpose(forcing, (1, 0, 2))
         hydro = np.transpose(hydro, (1, 0, 2))
 
-        if self.mode == 'train':
+        if self.mode in ['train', 'valid']:
             # (ngrids, nt, nfeat)
             return forcing, hydro
         else:
@@ -58,6 +57,7 @@ class Dataset():
             return forcing, hydro
 
     def _load_input(self):
+        # TODO:ensure to obey this name.
         forcing = np.load(self.inputs_path +
                           "guangdong_9km_forcing_{}.npy".format(self.mode))
         hydro = np.load(self.inputs_path +
@@ -171,6 +171,7 @@ class Dataset():
 
 
 class DataGenerator(tf.keras.utils.Sequence):
+    # NOTE: Need test
     def __init__(self, x, y, cfg, shuffle=True):
         super().__init__()
         self.x, self.y = x, y  # (ngrid, nt, nfeat)-(ngrid, nt, nout)
