@@ -5,7 +5,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 import tensorflow.keras.backend as K
 
 
-class LSTM(Model):
+class VanillaLSTM(Model):
     """LSTM with single task"""
 
     def __init__(self, cfg):

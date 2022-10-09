@@ -1,3 +1,4 @@
+import os
 import tensorflow as tf
 import tensorflow.keras.backend as K
 import tensorflow_addons as tfa
@@ -6,19 +7,16 @@ from tensorflow.keras.optimizers import Adam
 import numpy as np
 import json
 from callback import CallBacks
-from config import get_args
+from config import parse_args
 from data import DataGenerator, Dataset
 from loss import PHydroLoss
 from metrics import PHydroMetrics
-from model import LSTM, MTLLSTM, MTLHardLSTM
-
+from model import VanillaLSTM, MTLLSTM, MTLHardLSTM
+import wandb
 
 def main(cfg):
     print("[PHydro] Now we train {} models".format(cfg["model_name"]))
-
-    # params
-    callback_path = cfg["outputs_path"]+'saved_model/'+cfg["model_name"]+'/'
-
+    wandb.init("PHydro")
     # load train/valid/test data
     print("[PHydro] Loading train/valid/test datasets")
     f = Dataset(cfg, mode='train')
@@ -28,36 +26,50 @@ def main(cfg):
     f = Dataset(cfg, mode='test')
     x_test, y_test = f.fit()
 
+    """
+    np.save("x_train.npy", x_train)
+    np.save("y_train.npy", y_train)
+    np.save("x_valid.npy", x_valid)
+    np.save("y_valid.npy", y_valid)
+    np.save("x_test.npy", x_test)
+    np.save("y_test.npy", y_test)
+    os.system("mv {} {}".format("*npy", cfg["inputs_path"]))
+    """
+
     # load scaler for inverse
     with open(cfg["inputs_path"] + 'scaler.json', "r") as j:
         scaler = json.load(j)
 
     # train & inference
     if cfg["model_name"] == 'single_task':
-        mdl_list = []
         for i in range(cfg["num_out"]):
-            model = LSTM(cfg)
+            model = VanillaLSTM(cfg)
+            # params
+            callback_path = cfg["outputs_path"]+'saved_model/'+cfg["model_name"]+'/'+str(i)+'/'
             # compile model
             model.compile(optimizer=Adam(cfg["learning_rate"]),
-                          loss=PHydroLoss(cfg),
+                          loss='mse',#PHydroLoss(cfg),
                           metrics=['mse'])  # PHydroMetrics(cfg))
             # generators
-            train_generator = DataGenerator(x_train, y_train[:, i], cfg)
-            valid_generator = DataGenerator(x_valid, y_valid[:, i], cfg)
+            train_generator = DataGenerator(x_train, y_train[:, :, i], cfg)
+            valid_generator = DataGenerator(x_valid, y_valid[:, :, i], cfg)
             # fit
             mdl = model.fit_generator(
                 train_generator,
                 validation_data=valid_generator,
-                steps_per_epochs=cfg["niter"],
-                callback=[CallBacks(callback_path)()])
-            mdl_list.append(mdl)
+                epochs=cfg["epochs"],
+                steps_per_epoch=cfg["niter"],
+                callbacks=[CallBacks(callback_path)()])
         # inference
         # (ngrids, samples, seq_len, nfeat)
         y_pred = []
         for i in range(x_test.shape[0]):  # for each grids
             tmp = []
             for mdl in range(mdl_list):  # for each feat
-                pred = mdl.predict(x_test[i])
+                model = VanillaLSTM(cfg)
+                callback_path = cfg["outputs_path"]+'saved_model/'+cfg["model_name"]+'/'+str(i)+'/'
+                model.load_weight(callback_path)
+                pred = model.predict(x_test[i])
                 pred = f.reverse_normalize(pred, scaler)
                 tmp.append(pred)
             tmp = np.concatenate(tmp, axis=-1)  # (samples, num_out)
@@ -94,5 +106,5 @@ def main(cfg):
 
 
 if __name__ == '__main__':
-    cfg = get_args()
+    cfg = parse_args()
     main(cfg)

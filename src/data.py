@@ -1,6 +1,6 @@
 import json
 import math
-
+import os
 import numpy as np
 import tensorflow as tf
 
@@ -16,16 +16,22 @@ class Dataset():
 
     def fit(self):
         # load input data
+        print("[PHydro] Loading input data")
         forcing, hydro, ancillary = self._load_input()
         self.nt = forcing.shape[0]
+        
+        # load ancillary data
         if self.use_ancillary:
+            print("[PHydro] Loading ancillary data")
             ancillary = np.tile(ancillary[np.newaxis], (self.nt, 1, 1))
             forcing = np.concatenate([forcing, ancillary], axis=-1)
 
         # Optional: remove outlier (for nonreasonable runoff)
+        print("[PHydro] Remove outliers")
         hydro = self._remove_outlier(hydro)
 
         # get scaler
+        print("[PHydro] Making scaler")
         if self.mode == 'train':
             scaler = self._get_minmax_scaler(forcing, hydro)
             self._save_scaler(self.inputs_path, scaler)
@@ -34,6 +40,7 @@ class Dataset():
             scaler = self._load_scaler(self.inputs_path)
 
         # normalize input for train/valid/test
+        print("[PHydro] Normalization")
         forcing = self._minmax_normalize(forcing, scaler, is_feat=True)
 
         # Optional: normalize output (for train dataset)
@@ -47,13 +54,17 @@ class Dataset():
         forcing = np.transpose(forcing, (1, 0, 2))
         hydro = np.transpose(hydro, (1, 0, 2))
 
+        print("[PHydro] Making output")
         if self.mode in ['train', 'valid']:
             # (ngrids, nt, nfeat)
+            print("[PHydro] {} mode shape: <{},{}>".format(self.mode, forcing.shape, hydro.shape))
             return forcing, hydro
         else:
             # (ngrids, nsamples, seq_len, nfeat)
+            print(forcing.shape, hydro.shape)
             forcing, hydro = self._make_inference_data(
                 forcing, hydro, self.seq_len, self.interval, self.window_size)
+            print("[PHydro] {} mode shape: <{},{}>".format(self.mode, forcing.shape, hydro.shape))
             return forcing, hydro
 
     def _load_input(self):
@@ -180,6 +191,7 @@ class DataGenerator(tf.keras.utils.Sequence):
         self.seq_len = cfg["seq_len"]
         self.ngrids = x.shape[0]
         self.nt = x.shape[1]
+        self.indexes = np.arange(self.ngrids)
 
     def __len__(self):
         return math.ceil(self.ngrids / self.batch_size)
