@@ -171,7 +171,7 @@ class Dataset():
 
 
 class DataGenerator(tf.keras.utils.Sequence):
-    # NOTE: Need test
+    """Data generator based on Shen et al."""
     def __init__(self, x, y, cfg, shuffle=True):
         super().__init__()
         self.x, self.y = x, y  # (ngrid, nt, nfeat)-(ngrid, nt, nout)
@@ -180,7 +180,8 @@ class DataGenerator(tf.keras.utils.Sequence):
         self.seq_len = cfg["seq_len"]
         self.ngrids = x.shape[0]
         self.nt = x.shape[1]
-
+        self.indexes = np.arange(self.ngrids)
+        
     def __len__(self):
         return math.ceil(self.ngrids / self.batch_size)
 

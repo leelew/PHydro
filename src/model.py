@@ -5,29 +5,35 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 import tensorflow.keras.backend as K
 
 
-class LSTM(Model):
+class VanillaLSTM(Model):
     """LSTM with single task"""
 
     def __init__(self, cfg):
         super().__init__()
         self.lstm = LSTM(8*cfg["n_filter_factors"])
-        self.dense = Dense(1)
+        self.drop = Dropout(cfg["dropout_rate"])
+        self.dense = Dense(1, activation='tanh')
 
     def call(self, inputs):
         x = self.lstm(inputs)
+        x = self.drop(x)
         x = self.dense(x)
         return x
 
     @tf.function
     def train_step(self, data):
-        x, y = data
+        if len(data) == 3:
+            x, y, sample_weight=data
+        else:
+            x, y = data
+            sample_weight=None
         with tf.GradientTape() as tape:
             y_pred = self(x, training=True)
-            loss = self.compiled_loss(y, y_pred)
+            loss = self.compiled_loss(y, y_pred,sample_weight=sample_weight, regularization_losses=self.losses,)
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
-        self.compiled_metrics.update_state(y, y_pred)
+        self.compiled_metrics.update_state(y, y_pred, sample_weight=sample_weight)
         return {m.name: m.result() for m in self.metrics}
 
 

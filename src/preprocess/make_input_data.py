@@ -12,14 +12,21 @@ from colm2era import h2osoi_colm2era
 # ------------------------------------------------------------------------------
 # params
 # ------------------------------------------------------------------------------
-years = np.arange(2000, 2017)  # 2000-2016
+years = np.arange(2019, 2021)  # 2000-2016
 months = np.arange(1, 13)  # 1-12
 PATH = "/tera05/lilu/PHydro/data/"  # path contain raw data
 inputs_path = "/tera05/lilu/PHydro/input/"  # path contain inputs
-
+mode = 'test'
 # ------------------------------------------------------------------------------
 # extract guangdong points
 # ------------------------------------------------------------------------------
+in_shape_idx = np.load(inputs_path+"guangdong_9km_shapefile.npy")
+idx = np.where(in_shape_idx == 1)[0]
+idx1 = np.delete(idx, [1220,1544,1550,1563])
+
+
+"""
+# codes for extract guangdong points
 with xr.open_dataset(PATH+"CoLM/global_MSWX_9km_hist_2000-01.nc", decode_times=False) as f:
     lat, lon = np.array(f.lat), np.array(f.lon)
 
@@ -39,8 +46,10 @@ for i, pt in enumerate(flat_points):
         in_shape_idx[i] = 1
         count += 1
 idx = np.where(in_shape_idx == 1)[0]
+np.save("guangdong_9km_shapefile.npy", in_shape_idx)
+"""
 
-
+"""
 # ------------------------------------------------------------------------------
 # read CoLM hydrology & forcing variables
 # ------------------------------------------------------------------------------
@@ -79,17 +88,17 @@ for year in years:
         Nt, Nlat, Nlon, Nfeat = tmp.shape
         tmp = tmp.reshape(Nt, -1, Nfeat)[:, idx, :]
         forcing.append(tmp)
-        tmp = np.stack([swvl1, swvl2, swvl3, swvl4, evpa, rnof])
+        tmp = np.stack([swvl1, swvl2, swvl3, swvl4, evpa, rnof], axis=-1)
         Nt, Nlat, Nlon, Nfeat = tmp.shape
         tmp = tmp.reshape(Nt, -1, Nfeat)[:, idx, :]
         hydrology.append(tmp)
 
 forcing = np.concatenate(forcing, axis=0)
-np.save("guangdong_9km_MSWX_forcing.npy", forcing)
+np.save("guangdong_9km_forcing_{}.npy".format(mode), forcing)
 print(forcing.shape)
 del forcing
 hydrology = np.concatenate(hydrology, axis=0)
-np.save("guangdong_9km_CoLM_hydrology.npy", hydrology)
+np.save("guangdong_9km_hydrology_{}.npy".format(mode), hydrology)
 print(hydrology.shape)
 del hydrology
 
@@ -116,6 +125,12 @@ static = np.flip(static, axis=0)
 Nlat, Nlon, Nfeat = static.shape
 static = static.reshape(-1, Nfeat)[idx, :]
 print(static.shape)
+
+for i in range(Nfeat):
+    tmp = static[:,i]
+    tmp[np.isnan(tmp)] = np.nanmean(tmp)
+    static[:,i] = tmp
+
 np.save("guangdong_9km_ancillary.npy", static)
 
 
@@ -123,3 +138,6 @@ np.save("guangdong_9km_ancillary.npy", static)
 # move to input path
 # ------------------------------------------------------------------------------
 os.system("mv {} {}".format('guangdong*npy', inputs_path))
+"""
+
+
