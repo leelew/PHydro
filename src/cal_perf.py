@@ -1,4 +1,3 @@
-import imp
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -71,6 +70,7 @@ os.system('mv {} {}'.format('urmse_'+cfg["model_name"]+'.npy', path))
 
 # preliminary plot
 # figure 1 (countour)
+print(r2.shape, attr.shape, lat_gd.shape, lon_gd.shape)
 r2_grid = site2grid(r2, attr[:,1], attr[:,0], lat_gd, lon_gd)
 var_list = ["0-7cm soil moisture", "7-28cm soil moisture", "28-100cm soil moisture", "100-286.46cm soil moisture","evapotranspiration","total runoff"]
 text = ["(a)","(b)","(c)","(d)","(e)","(f)"]
