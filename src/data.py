@@ -10,54 +10,65 @@ class Dataset():
         self.inputs_path = cfg["inputs_path"]
         self.use_ancillary = cfg["use_ancillary"]
         self.seq_len = cfg["seq_len"]
+        self.split_ratio = cfg["split_ratio"]
         self.interval = cfg["interval"]
         self.window_size = cfg["window_size"]
+        self.num_out = cfg["num_out"]
         self.mode = mode
 
     def fit(self):
-        # load input data
+        # load input data (nt, ngrid, nfeat)
         forcing, hydro, ancillary = self._load_input()
-        self.nt = forcing.shape[0]
         if self.use_ancillary:
             ancillary = np.tile(ancillary[np.newaxis], (self.nt, 1, 1))
             forcing = np.concatenate([forcing, ancillary], axis=-1)
 
-        # Optional: remove outlier (for nonreasonable runoff)
-        hydro = self._remove_outlier(hydro)
+        # remove outlier (for nonreasonable runoff)
+        hydro = self._remove_outlier(hydro, threshold=100)
+
+        # make aux data (precip(t), swvl(t-1))
+        # NOTE: Before normalization to keep unit mm
+        precip = np.nansum(forcing[:,:,:2], axis=-1, keepdims=True)
+        swvl_prev = 0
+        soil_depth = [70, 210, 720, 1864.6] # mm
+        for i in range(4): swvl_prev+=hydro[:,:,i:i+1]*soil_depth[i]
+        aux = np.concatenate([precip[1:], swvl_prev[:-1]], axis=-1)
 
         # get scaler
         if self.mode == 'train':
             scaler = self._get_minmax_scaler(forcing, hydro)
             self._save_scaler(self.inputs_path, scaler)
         else:
-            # ensure data is fitted in train mode before
+            # NOTE: ensure data is fitted in train mode before
             scaler = self._load_scaler(self.inputs_path)
 
         # normalize input for train/valid/test
         forcing = self._minmax_normalize(forcing, scaler, is_feat=True)
 
-        # Optional: normalize output (for train dataset)
-        if self.mode in ['train', 'valid']:
+        # normalize output (for train dataset)
+        if self.mode == 'train':
             hydro = self._minmax_normalize(hydro, scaler, is_feat=False)
-            # FIXME: process NaN in forcing, hydro;
-            # NOTE: interpolate is not suit for runoff?? discuss with Wei
-            hydro[np.isnan(hydro)] = 0
 
-        # return train/valid/test data, transpose to (ngrids, nt, nfeat)
-        forcing = np.transpose(forcing, (1, 0, 2))
-        hydro = np.transpose(hydro, (1, 0, 2))
-
-        if self.mode in ['train', 'valid']:
-            # (ngrids, nt, nfeat)
-            return forcing, hydro
+        # transpose to (nt, ngrid, nfeat)
+        
+        # make training/test data
+        if self.mode in ['train']:
+            # (nt_, ngrid, nfeat)
+            N = int(self.split_ratio*hydro.shape[0])
+            x_train, y_train = forcing[:N], hydro[:N]
+            x_valid, y_valid = forcing[N:], hydro[N:]
+            # (ngrid*nyears*1/offset, seq_len, nfeat)
+            x_train, y_train = self._split_into_batch(x_train, y_train, self.seq_len, 0.5)
+            x_valid, y_valid = self._split_into_batch(x_valid, y_valid, self.seq_len, 0.5)
+            return x_train, y_train, x_valid, y_valid
         else:
-            # (ngrids, nsamples, seq_len, nfeat)
-            forcing, hydro = self._make_inference_data(
-                forcing, hydro, self.seq_len, self.interval, self.window_size)
-            return forcing, hydro
+            # (ngrids, nsamples/1, seq_len, nfeat) 
+            # FIXME: Maybe change interval to 365.
+            x_test, y_test = self._make_inference_data(
+                forcing, hydro, self.seq_len, 1, self.window_size)
+            return x_test, y_test
 
     def _load_input(self):
-        # TODO:ensure to obey this name.
         forcing = np.load(self.inputs_path +
                           "guangdong_9km_forcing_{}.npy".format(self.mode))
         hydro = np.load(self.inputs_path +
@@ -66,16 +77,32 @@ class Dataset():
                             "guangdong_9km_ancillary.npy")
         return forcing, hydro, ancillary
 
-    def _remove_outlier(self, input):  # (nt, ngrids, nfeat)
+    def _remove_outlier(self, hydro, threshold=200):  # (nt, ngrids, nfeat)
         """remove outlier larger than mean+3*std and less than mean-3*std"""
-        std = np.nanstd(input, axis=(0), keepdims=True)  # (1, ngrids, nfeat)
-        mean = np.nanmean(input, axis=(0), keepdims=True)  # (1, ngrids, nfeat)
-        input[np.where(input > (mean+3*std))] = np.nan
-        input[np.where(input < (mean-3*std))] = np.nan
-        self.remove_outlier = True
-        return input
+        #std = np.nanstd(input, axis=(0), keepdims=True)  # (1, ngrids, nfeat)
+        #mean = np.nanmean(input, axis=(0), keepdims=True)  # (1, ngrids, nfeat)
+        #input[np.where(input > (mean+3*std))] = np.nan
+        #input[np.where(input < (mean-3*std))] = np.nan
+        #self.remove_outlier = True
 
-    def _get_minmax_scaler(self, x, y):  # (nt, ngrids, nfeat)
+        # @(Zhongwang Wei): remove unreasonable runoff > 200mm/day and 
+        # interplote by adjacency two days
+        rnof = hydro[:,:,-1]
+        rnof[rnof>threshold] = np.nan
+        nt, ngrid, nout = hydro.shape
+        for i in range(ngrid):
+            tmp = rnof[:,i]
+            if np.isnan(tmp).any():
+                idx = np.where(np.isnan(tmp))[0]
+                for j in idx:
+                    if j == 0: tmp[j] = tmp[j+1]
+                    elif j == nt: tmp[j] = tmp[j-1]
+                    else: tmp[j] = (tmp[j-1]+tmp[j+1])/2
+            rnof[:,i] = tmp
+        hydro[:,:,-1] = rnof
+        return hydro
+
+    def _get_minmax_scaler(self, x, y):  # (nt, ngrids, nfeat) - (1, ngrids, nfeat)
         scaler = {}
         scaler["x_min"] = np.nanmin(x, axis=(0), keepdims=True).tolist()
         scaler["x_max"] = np.nanmax(x, axis=(0), keepdims=True).tolist()
@@ -110,9 +137,9 @@ class Dataset():
 
     def _make_inference_data(self, X, y, seq_len, interval, window_size):
         x_, y_ = [], []
-        for i in range(X.shape[0]):  # parfor each grids
+        for i in range(X.shape[1]):  # parfor each grids
             tmpx, tmpy = self._reshape_1d_data(
-                X[i], y[i], seq_len, interval, window_size)  # (nt, nfeat)
+                X[:,i], y[:,i], seq_len, interval, window_size)  # (nt, nfeat)
             x_.append(tmpx)
             y_.append(tmpy)
         x_ = np.stack(x_, axis=0)
@@ -149,12 +176,44 @@ class Dataset():
         n = (num_samples-seq_length+1) // interval
 
         x_new = np.zeros((n, seq_length, num_features))*np.nan
-        y_new = np.zeros((n, num_out))*np.nan
-
-        for i in range(0, n):
+        y_new = np.zeros((n, seq_length, num_out))*np.nan
+        
+        for i in range(n):
             x_new[i] = X[i*interval:i*interval+seq_length, :]
-            y_new[i] = y[i*interval+window_size+seq_length-1, :]
+            y_new[i] = y[i*interval+seq_length-1, :]
         return x_new, y_new
+
+    def _split_into_batch(self, X, y, seq_len=365, offset=1, window_size=0):
+        """
+        split training data into batches with size of batch_size
+        :param data_array: [numpy array] array of training data with dims [nseg,
+        ndates, nfeat]
+        :param seq_len: [int] length of sequences (i.e., 365)
+        :param offset: [float] 0-1, how to offset the batches (e.g., 0.5 means that
+        the first batch will be 0-365 and the second will be 182-547)
+        :return: [numpy array] batched data with dims [nbatches, nseg, seq_len
+        (batch_size), nfeat]
+        """
+        #(nt_, ngrid, nfeat)
+        x_batchs, y_batchs = [], []
+        for i in range(int(1 / offset)):
+            start = int(i * offset * seq_len)
+            idx = np.arange(start, y.shape[0]+1, seq_len)
+            split_x = np.split(X, indices_or_sections=idx, axis=0) #(seq_len,ngrid,nfeat)
+            split_y = np.split(y, indices_or_sections=idx, axis=0) 
+            # add all but the first and last batch since they will be smaller
+            for s in split_x:
+                if s.shape[0] == seq_len:
+                    print(s.shape)
+                    x_batchs.append(s)
+            for s in split_y:
+                if s.shape[0] == seq_len:
+                    print(s.shape)
+                    y_batchs.append(s)
+        x_batchs = np.concatenate(x_batchs, axis=1)
+        y_batchs = np.concatenate(y_batchs, axis=1) #(seq_len,ngrid*nyears*1/offset,nfeat)
+        print(x_batchs.shape, y_batchs.shape)
+        return np.transpose(x_batchs,(1,0,2)), np.transpose(y_batchs,(1,0,2))
 
     @staticmethod
     def make_training_data(X, y, ngrids, seq_len):
@@ -170,31 +229,3 @@ class Dataset():
         return self.nt
 
 
-class DataGenerator(tf.keras.utils.Sequence):
-    # NOTE: Need test
-    def __init__(self, x, y, cfg, shuffle=True):
-        super().__init__()
-        self.x, self.y = x, y  # (ngrid, nt, nfeat)-(ngrid, nt, nout)
-        self.shuffle = shuffle
-        self.batch_size = cfg["batch_size"]
-        self.seq_len = cfg["seq_len"]
-        self.ngrids = x.shape[0]
-        self.nt = x.shape[1]
-
-    def __len__(self):
-        return math.ceil(self.ngrids / self.batch_size)
-
-    def __getitem__(self, idx):
-        # index for grids
-        grid_idx = self.indexes[idx * self.batch_size:(idx+1)*self.batch_size]
-        # index for timestep
-        begin_idx = np.random.randint(0, self.nt-self.seq_len, 1)[0]
-        # crop
-        x_ = self.x[grid_idx, begin_idx:begin_idx+self.seq_len]
-        y_ = self.y[grid_idx, begin_idx+self.seq_len-1]
-        return x_, y_
-
-    def on_epoch_end(self):
-        self.indexes = np.arange(self.ngrids)
-        if self.shuffle:
-            np.random.shuffle(self.indexes)
