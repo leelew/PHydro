@@ -1,3 +1,3 @@
-# PHydro | Physical-constrain multitask models
+# PHydro | Mass conserve multi-task models
 
 

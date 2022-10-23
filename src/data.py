@@ -97,7 +97,7 @@ class Dataset():
                 for j in idx:
                     if j == 0: tmp[j] = tmp[j+1]
                     elif j == nt: tmp[j] = tmp[j-1]
-                    else: tmp[j] = (tmp[j-1]+tmp[j+1])/2
+                    else: tmp[j] = np.nanmean(tmp)#(tmp[j-1]+tmp[j+1])/2
             rnof[:,i] = tmp
         hydro[:,:,-1] = rnof
         return hydro

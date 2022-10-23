@@ -59,8 +59,8 @@ def main(cfg):
     print("[PHydro] Start train!")
     if cfg["model_name"] == 'single_task':
         loss = np.full((cfg["epochs"], cfg["num_out"], 2), np.nan)
-        
-        for i in range(cfg["num_out"]):
+        """
+        for i in range(5, cfg["num_out"]):
             # compile model
             model = VanillaLSTM(cfg)
             model.compile(optimizer=Adam(cfg["learning_rate"]),
@@ -79,7 +79,7 @@ def main(cfg):
             n = len(mdl.history["loss"])
             loss[:n,i,0] = mdl.history["loss"]
             loss[:n,i,1] = mdl.history["val_loss"]
-        
+        """ 
         # inference (ngrids, samples, seq_len, nfeat)
         y_pred = []
         for j in range(cfg["num_out"]): # for each feat
@@ -87,13 +87,16 @@ def main(cfg):
             model = VanillaLSTM(cfg)
             model.load_weights(callback_path+str(j)+'/')    
             for i in range(x_test.shape[0]):  # for each grids (samples,seq_len,nfeat)
+                print(i)
                 tmp = []
-                pred = model.predict(x_test[i])
+                pred = model(x_test[i],training=False)
                 tmp.append(pred[:,-2:-1]) #(samples,1)
-            tmp = np.stack(tmp, axis=1)  # (samples, ngrids, 1)
+            tmp = np.concatenate(tmp, axis=1)  # (samples, ngrids, 1)
             y_pred.append(tmp) 
         y_pred = np.concatenate(y_pred, axis=-1)  # (samples, ngrids, num_out)
+        print(y_pred.shape)
         y_pred = f.reverse_normalize(y_pred, scaler)
+        print(y_pred.shape)
         y_pred = np.transpose(y_pred,(1,0,2))
     else:
         # get model
