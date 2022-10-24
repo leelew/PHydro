@@ -3,6 +3,23 @@ import tensorflow as tf
 import numpy as np
 
 
+def load_data(x, y, cfg):
+    """make training data as Shen et al. 2019"""
+    ngrid, nt, num_features = x.shape
+    idx_grid = np.random.randint(0, ngrid, cfg["batch_size"])
+    idx_time = np.random.randint(0, nt-cfg["seq_len"], 1)[0]
+    x = x[idx_grid, idx_time:idx_time+cfg["seq_len"], :]
+    y = y[idx_grid, idx_time+cfg["seq_len"]-1, :]
+    return x, y
+
+
+def reverse_normalize(input, scaler):
+    """reverse normalized forecast using pre-computed statistics"""
+    return input * (np.array(scaler["y_max"])-np.array(scaler["y_min"])) + \
+        np.array(scaler["y_min"])
+
+
+
 class DataGenerator(tf.keras.utils.Sequence):
     """Data generator based on Shen et al."""
     def __init__(self, x, y, cfg, shuffle=True):

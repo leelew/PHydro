@@ -16,8 +16,9 @@ cfg = parse_args()
 path = cfg["outputs_path"]+'forecast/'+cfg["model_name"]+'/'
 y_pred = np.load(path+cfg["model_name"]+'_guangdong_9km.npy')
 path = cfg["inputs_path"]
-y_test = np.load(path+'y_test.npy')
+y_test = np.load(path+'y_test.npy')[:,:,-1,:]
 
+print(y_pred.shape, y_test.shape)
 # get shape
 ngrids, nt, nfeat = y_pred.shape
 
@@ -58,9 +59,13 @@ def site2grid(input, site_lat, site_lon, grid_lat, grid_lon):
         input_grid[idx_lat, idx_lon] = input[i]
     return input_grid
 
+y_pred_ = site2grid(y_pred, attr[:,1], attr[:,0], lat_gd, lon_gd)
+y_test_ = site2grid(y_test, attr[:,1], attr[:,0], lat_gd, lon_gd)
 # save
 np.save('r2_'+cfg["model_name"]+'.npy', r2)
 np.save('urmse_'+cfg["model_name"]+'.npy', urmse)
+np.save('y_pred_'+cfg["model_name"]+'.npy', y_pred_)
+np.save('y_test_'+cfg["model_name"]+'.npy', y_test_)
 path = cfg["outputs_path"]+'forecast/'+cfg["model_name"]+'/'
 os.system('mv {} {}'.format('r2_'+cfg["model_name"]+'.npy', path))
 os.system('mv {} {}'.format('urmse_'+cfg["model_name"]+'.npy', path))

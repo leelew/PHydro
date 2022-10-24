@@ -13,7 +13,7 @@ class VanillaLSTM(Model):
     def __init__(self, cfg):
         super().__init__()
         self.lstm = LSTM(20,#8*cfg["n_filter_factors"], 
-                         return_sequences=True, 
+                         return_sequences=False, 
                          recurrent_dropout=cfg["dropout_rate"])
         self.dense = Dense(1)
 
@@ -21,6 +21,7 @@ class VanillaLSTM(Model):
         x = self.lstm(inputs)
         x = self.dense(x)
         return x
+
 
 
 class MTLLSTM(Model):
@@ -67,6 +68,7 @@ class MTLLSTM(Model):
             self.optimizer.apply_gradients(zip(grads, vars))
         self.compiled_metrics.update_state(y, y_pred)
         return {m.name: m.result() for m in self.metrics}
+
 
 
 class MassConsLayer(Layer):
