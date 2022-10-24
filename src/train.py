@@ -1,101 +1,113 @@
+import time
+
+from tqdm import trange
 import numpy as np
 import tensorflow as tf
 import tensorflow.keras.backend as K
+from tensorflow.keras.optimizers import Adagrad
 import tensorflow_addons as tfa
-from tensorflow.keras.optimizers import Adam
+from sklearn.metrics import r2_score
+
+from data_generator import load_data, reverse_normalize
+from loss import PHydroLoss
+from model import VanillaLSTM
 
 
-def train_shared_layer(x_train,
-                       y_train,
-                       x_valid,
-                       y_valid,
-                       cfg,
-                       model,
-                       loss_fn,
-                       optimizer,
-                       data_generator,
-                       train_acc_metric,
-                       valid_acc_metric):
-    """train shared LSTM layers"""
-    for epoch in range(cfg["epochs"]):
-        for iter in range(cfg["niters"]):
-            x_batch, y_batch = data_generator(x_train, y_train)
-            with tf.GradientTape(persistent=True) as tape:
-                pred = model(x_batch)
-                loss = loss_fn(y_batch, x_batch)
-            train_vars = model.trainable_variables
-            grads = tape.gradient(loss, train_vars)
-            optimizer.apply_gradients(zip(grads, train_vars))
-            train_acc_metric.update_state(y_batch, pred)
-        train_acc = train_acc_metric.result().numpy()
-        train_acc_metric.reset_states()
-
-    # TODO: Add validate process
-        print("{epoch}: train: {train_acc}, valid: {valid_acc}".format(
-            epoch=epoch, train_acc=round(train_acc, 2), valid_acc=round(val_acc, 2)))
-
-        # save best model
-        if val_acc > best_acc:
-            model.save_weights(
-                cfg["run_dir"] / 'saved_model' / 'model_ft.h5')
-            best_acc = val_acc
-    return model    # FIXME: save models
+@tf.function # for speed up
+def train_step(x, y, model,loss_fn, optim, metric):
+    with tf.GradientTape() as tape:
+        pred = model(x)
+        loss = loss_fn(y, pred)
+    grads = tape.gradient(loss, model.trainable_variables)
+    optim.apply_gradients(zip(grads, model.trainable_variables))
+    metric.update_state(y, pred)
 
 
-def train_head_layer(X, y, cfg, model, loss_fn, optimizer, data_generator):
-    """train head dense layers for multi-tasks"""
-    def get_variables(trainable_variables, name):
-        return [v for v in trainable_variables if name in v.name]
-
-    # ensure not single task and needs tune for multi-tasks
-    if cfg["is_tune"] and (cfg["model_name"] != "single_task"):
-        for epoch in range(cfg["epochs_ft"]):
-            for iter in range(cfg["niters_ft"]):
-                x_batch, y_batch = data_generator(X, y)
-                with tf.GradientTape(persistent=True) as tape:
-                    pred = model(x_batch)
-                    loss = []
-                    for i in range(cfg["num_out"]):
-                        loss.append(loss_fn(y_batch[:, i], pred[:, i]))
-
-                trainable_vars = model.trainable_variables
-                for i in range(cfg["num_out"]):
-                    vars = get_variables(trainable_vars, "head_"+str(i+1))
-                    grads = tape.gradient(loss[i], vars)
-                    optimizer.apply_gradients(zip(grads, vars))
-    return model
+@tf.function
+def test_step(x, model):
+    pred = model(x, training=False)
+    return pred
 
 
-def train_single_task(X, y, cfg, model, loss_fn, optimizer, data_generator):
-    model_list = []
-    for i in range(cfg["num_out"]):
-        mdl = train_shared_layer(
-            X, y[:, :, i], cfg, model, loss_fn, optimizer, data_generator)
-        model_list.append(mdl)
-    return model_list
+def train(model, x, y, cfg, i=None, validation_split=None):
+    optim = Adagrad(cfg["learning_rate"])
+    loss_fn = PHydroLoss(cfg)
+    metric = tfa.metrics.RSquare()
+    patience = 20
+    wait = 0
+    best = 0
+    
+    if validation_split:
+        N = int(x.shape[1]*validation_split)
+        x_valid, y_valid = x[:,N:], y[:,N:]
+        x, y = x[:,:N], y[:,N]
+        valid_metric = tfa.metrics.RSquare()
+
+    save_folder = cfg["outputs_path"]+"saved_model/"+cfg["model_name"]+'/'
+    if cfg["model_name"] == 'single_task': save_folder = save_folder+str(i)+'/'
+
+    with trange(1, cfg["epochs"]+1) as pbar:
+        for epoch in pbar:
+            pbar.set_description("Training {}".format(cfg["model_name"]))
+            
+            t0 = time.time()
+            #TODO(lilu) Adaptively iteration step setting.
+            for iter in range(0, cfg["niter"]): 
+                x_batch, y_batch = load_data(x, y, cfg)
+                train_step(x_batch, y_batch, model, loss_fn, optim, metric)
+            train_acc = metric.result().numpy()
+            metric.reset_states()
+            t1 = time.time()
+
+            loss_str = "Epoch {} Loss {:.3f} time {:.2f}".format(epoch, train_acc, t1-t0)
+            print(loss_str)
+            pbar.set_postfix(loss=train_acc)
+
+            #TODO(lilu)save best strategy 
+            if validation_split:
+                pass
+            else:
+                # save each 100 epoch
+                if epoch % 100 == 0:
+                    model.save_weights(save_folder)
+                
+            #TODO(lilu)early stopping strategy
+            wait += 1
+            if train_acc > best:
+                best = train_acc
+                wait = 0
+            if wait >= patience:
+                break
+            
 
 
-def train_multi_tasks(X, y, cfg, model, loss_fn, optimizer, data_generator):
-    model = train_shared_layer(
-        X, y, cfg, model, loss_fn, optimizer, data_generator)
-    model = train_head_layer(
-        X, y, cfg, model, loss_fn, optimizer, data_generator)
-    return model
+def predict(x, y, scaler, cfg):
+    # 
+    print(x.shape, y.shape) #(ngrid, nt, seq_len, 9) (ngrid,nt,6)
+    mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"]) #(1, ngrid, 6)
 
+    # save folder
+    save_folder = cfg["outputs_path"]+"saved_model/"+cfg["model_name"]+'/'
 
-def predict_single_task(X, model_list):
-    # (ngrids, samples, seq_len, nfeat)
     y_pred = []
-    for i in range(X.shape[0]):  # for each grids
+    for j in range(1): # for each feat
+        print(j)
+        if cfg["model_name"] == 'single_task': 
+            save_folder = save_folder+str(j)+'/'
+        model = VanillaLSTM(cfg)
+        model.load_weights(save_folder)  
+
+        t0 = time.time()  
         tmp = []
-        for mdl in range(model_list):  # for each feat
-            tmp.append(mdl.predict(X[i]))
-        tmp = np.concatenate(tmp, axis=-1)  # (samples, num_out)
+        r2 = []
+        for i in range(x.shape[0]):  # for each grids (samples,seq_len,nfeat)
+            pred = test_step(x[i], model) # (nt, 1)
+            pred = pred*std[:,i,j]+mean[:,i,j] 
+            tmp.append(pred)
+            r2.append(r2_score(y[i,:,j],pred[:,0]))
+        mean_r2 = np.nanmean(np.array(r2))
+        t1 = time.time()
+        print("Var {} Mean NSE {:.3f} Time {:.2f}".format(j, mean_r2, t1-t0))
+        tmp = np.stack(tmp, axis=0)
         y_pred.append(tmp)
-    y_pred = np.stack(y_pred, axis=0)  # (ngrids, samples, num_out)
-    return y_pred
-
-
-def predict_multi_tasks(X, model):
-    y_pred = model.predict(X)  # FIXME: Add save best model and load best model
-    return y_pred
+    return np.concatenate(y_pred, axis=-1)

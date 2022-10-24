@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 
 
+
 class Dataset():
     def __init__(self, cfg, mode):
         self.inputs_path = cfg["inputs_path"]
@@ -36,23 +37,25 @@ class Dataset():
 
         # get scaler
         if self.mode == 'train':
-            scaler = self._get_minmax_scaler(forcing, hydro)
+            #scaler = self._get_minmax_scaler(forcing, hydro)
+            scaler = self._get_z_scaler(forcing, hydro)
             self._save_scaler(self.inputs_path, scaler)
         else:
             # NOTE: ensure data is fitted in train mode before
             scaler = self._load_scaler(self.inputs_path)
 
         # normalize input for train/valid/test
-        forcing = self._minmax_normalize(forcing, scaler, is_feat=True)
+        #forcing = self._minmax_normalize(forcing, scaler, is_feat=True)
+        forcing = self._z_normalize(forcing, scaler, is_feat=True)
 
         # normalize output (for train dataset)
         if self.mode == 'train':
-            hydro = self._minmax_normalize(hydro, scaler, is_feat=False)
+            #hydro = self._minmax_normalize(hydro, scaler, is_feat=False)
+            hydro = self._z_normalize(hydro, scaler, is_feat=False)
 
-        # transpose to (nt, ngrid, nfeat)
-        
         # make training/test data
         if self.mode in ['train']:
+            return np.transpose(forcing, (1,0,2)), np.transpose(hydro, (1,0,2))
             # (nt_, ngrid, nfeat)
             N = int(self.split_ratio*hydro.shape[0])
             x_train, y_train = forcing[:N], hydro[:N]
@@ -97,7 +100,7 @@ class Dataset():
                 for j in idx:
                     if j == 0: tmp[j] = tmp[j+1]
                     elif j == nt: tmp[j] = tmp[j-1]
-                    else: tmp[j] = (tmp[j-1]+tmp[j+1])/2
+                    else: tmp[j] = np.nanmean(tmp)#(tmp[j-1]+tmp[j+1])/2
             rnof[:,i] = tmp
         hydro[:,:,-1] = rnof
         return hydro
@@ -110,6 +113,14 @@ class Dataset():
         scaler["y_max"] = np.nanmax(y, axis=(0), keepdims=True).tolist()
         return scaler
 
+    def _get_z_scaler(self, x, y):
+        scaler = {}
+        scaler["x_mean"] = np.nanmean(x, axis=(0), keepdims=True).tolist()
+        scaler["x_std"] = np.nanstd(x, axis=(0), keepdims=True).tolist()
+        scaler["y_mean"] = np.nanmean(y, axis=(0), keepdims=True).tolist()
+        scaler["y_std"] = np.nanstd(y, axis=(0), keepdims=True).tolist()
+        return scaler
+
     def _save_scaler(self, inputs_path, scaler):
         with open(inputs_path + 'scaler.json', 'w') as f:
             json.dump(scaler, f)
@@ -118,6 +129,15 @@ class Dataset():
         with open(inputs_path + 'scaler.json', "r") as f:
             scaler = json.load(f)
         return scaler
+
+    def _z_normalize(self, input, scaler, is_feat):
+        if is_feat:
+            input = (input - np.array(scaler["x_mean"])) / (
+                np.array(scaler["x_std"]))
+        else:
+            input = (input - np.array(scaler["y_mean"])) / (
+                np.array(scaler["y_std"]))
+        return input
 
     def _minmax_normalize(self, input, scaler, is_feat):
         """normalize features using pre-computed statistics."""
@@ -128,12 +148,6 @@ class Dataset():
             input = (input - np.array(scaler["y_min"])) / (
                 np.array(scaler["y_max"])-np.array(scaler["y_min"]))
         return input
-
-    @staticmethod
-    def reverse_normalize(input, scaler):
-        """reverse normalized forecast using pre-computed statistics"""
-        return input * (np.array(scaler["y_max"])-np.array(scaler["y_min"])) + \
-            np.array(scaler["y_min"])
 
     def _make_inference_data(self, X, y, seq_len, interval, window_size):
         x_, y_ = [], []
@@ -176,7 +190,7 @@ class Dataset():
         n = (num_samples-seq_length+1) // interval
 
         x_new = np.zeros((n, seq_length, num_features))*np.nan
-        y_new = np.zeros((n, seq_length, num_out))*np.nan
+        y_new = np.zeros((n, num_out))*np.nan
         
         for i in range(n):
             x_new[i] = X[i*interval:i*interval+seq_length, :]
@@ -215,15 +229,6 @@ class Dataset():
         print(x_batchs.shape, y_batchs.shape)
         return np.transpose(x_batchs,(1,0,2)), np.transpose(y_batchs,(1,0,2))
 
-    @staticmethod
-    def make_training_data(X, y, ngrids, seq_len):
-        """make training data as Shen et al. 2019"""
-        num_grids, time_len, num_features = X.shape
-        idx_grid = np.random.randint(0, num_grids, ngrids)
-        idx_time = np.random.randint(0, time_len-seq_len, 1)[0]
-        X = X[idx_grid, idx_time:idx_time+seq_len, :]
-        y = y[idx_grid, idx_time+seq_len-1, :]
-        return X, y
 
     def __len__(self):
         return self.nt

@@ -1,8 +1,8 @@
-from tensorflow.keras.losses import Loss
-from tensorflow.keras.losses import mean_squared_error
-import tensorflow.keras.backend as K
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
+from tensorflow.keras.losses import Loss, mean_squared_error
+import tensorflow.keras.backend as K
+
 
 
 class PHydroLoss(Loss):
@@ -12,8 +12,8 @@ class PHydroLoss(Loss):
         self.alpha = cfg["alpha"]  # weight for physical loss (0-1)
         self.num_out = cfg["num_out"]
 
-    def call(self, y_true, y_pred, aux=None, resid_idx=None, optim_all=True): # must be call rather than __call__
-        """aux: p(t), sm(t-1)"""
+    # must be call rather than __call__
+    def call(self, y_true, y_pred, aux=None, resid_idx=None, optim_all=True): 
         if self.model_name in ["single_task", "multi-tasks"]:
             return mean_squared_error(y_true, y_pred)
 
