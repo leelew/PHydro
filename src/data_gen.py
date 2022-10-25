@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 
 
+
 def load_data(x, y, cfg):
     """make training data as Shen et al. 2019"""
     ngrid, nt, num_features = x.shape
@@ -11,6 +12,19 @@ def load_data(x, y, cfg):
     x = x[idx_grid, idx_time:idx_time+cfg["seq_len"], :]
     y = y[idx_grid, idx_time+cfg["seq_len"]-1, :]
     return x, y
+
+def load_test_data(X, y, seq_length, interval=1, window_size=0):
+    ngrid, nt, num_features = X.shape
+    _, _, num_out = y.shape
+    n = (nt-seq_length+1) // interval
+
+    x_new = np.zeros((ngrid, n, seq_length, num_features))*np.nan
+    y_new = np.zeros((ngrid, n, num_out))*np.nan
+    
+    for i in range(n):
+        x_new[:,i] = X[:,i*interval:i*interval+seq_length]
+        y_new[:,i] = y[:,i*interval+seq_length-1]
+    return x_new, y_new
 
 
 def reverse_normalize(input, scaler):

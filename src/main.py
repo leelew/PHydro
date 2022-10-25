@@ -7,14 +7,14 @@ import tensorflow_addons as tfa
 import numpy as np
 import wandb
 
-from callback import CallBacks
 from config import parse_args
 from data import  Dataset
-from data_generator import DataGenerator
-from loss import PHydroLoss
-from model import VanillaLSTM, MTLLSTM, MTLHardLSTM
+from model import VanillaLSTM,  MTLLSTM, MTLHardLSTM
 from utils import init_fold
-from train import train, predict
+from train import train_single, predict
+#seed = 42
+#tf.random.set_seed(seed)
+#np.random.seed(seed)
 
 
 
@@ -24,6 +24,7 @@ def main(cfg):
     # init fold for work path
     init_fold(cfg["work_path"])
 
+    print("[PHydro] Wandb info")
     # logging params in wandb
     default = dict(# model
                    model_name=cfg["model_name"],
@@ -54,11 +55,9 @@ def main(cfg):
     # train & inference
     print("[PHydro] Start train!")
     if cfg["model_name"] == 'single_task':
-        for i in range(cfg["num_out"]):
+        for i in range(5,cfg["num_out"]):
             model = VanillaLSTM(cfg)
-            train(model, x_train, y_train[:,:,i:i+1], cfg, i=i)
-        
-        ## pred
+            train_single(model, x_train, y_train[:,:,i:i+1], cfg, i, cfg["split_ratio"])
         y_pred = predict(x_test, y_test, scaler, cfg)
     else:
         pass
@@ -68,7 +67,7 @@ def main(cfg):
     path = cfg["outputs_path"]+'forecast/'+cfg["model_name"]+'/'
     np.save(cfg["model_name"]+'_guangdong_9km.npy', y_pred)
     os.system('mv {} {}'.format(cfg["model_name"]+'_guangdong_9km.npy', path))
-    os.system('mv {} {}'.format("loss_"+cfg["model_name"]+'.npy', path))
+    #os.system('mv {} {}'.format("loss_"+cfg["model_name"]+'.npy', path))
 
 
 if __name__ == '__main__':

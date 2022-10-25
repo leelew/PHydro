@@ -11,7 +11,7 @@ def unbiased_RMSE(y_true, y_pred):
 
 
 def init_fold(work_path):
-    print(work_path)
+    print("[PHydro] construct work path in {}".format(work_path))
     if not os.path.exists(work_path+"/input"):
         os.mkdir(work_path+"/input")
     if not os.path.exists(work_path+"/output"):
