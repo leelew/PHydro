@@ -10,10 +10,12 @@ class VanillaLSTM(Model):
     def __init__(self, cfg):
         super().__init__()
         self.lstm = LSTM(64, return_sequences=False)
+        #self.drop = Dropout(cfg["dropout_rate"])
         self.dense = Dense(1)
 
     def call(self, inputs):
         x = self.lstm(inputs)
+        #x = self.drop(x)
         x = self.dense(x)
         return x
 

@@ -1,14 +1,14 @@
 import time
+import os
 
 from tqdm import trange
 import numpy as np
 import tensorflow as tf
-import tensorflow.keras.backend as K
-from tensorflow.keras.optimizers import Adagrad
+from tensorflow.keras.optimizers import Adam
 import tensorflow_addons as tfa
 from sklearn.metrics import r2_score
 
-from data_gen import load_data, load_test_data, reverse_normalize
+from data_gen import load_train_data, load_test_data
 from loss import PHydroLoss
 from model import VanillaLSTM
 
@@ -38,23 +38,27 @@ def test_step(x, y, model, metric):
 
 
 
-def train_single(model, 
-                 x, 
+def train_single(x, 
                  y, 
                  cfg, 
-                 i, 
-                 valid_split=None):
+                 num_task, 
+                 valid_split=None,
+                 num_repeat=None):
     # Prepare for training
-    # Only use `Adagrad` in this study.  
-    optim = Adagrad(cfg["learning_rate"])
+    # NOTE: Only use `Adam`, we didn't apply adaptively 
+    #       learing rate schedule. We found `Adam` perform
+    #       much better than `Adagrad`, `Adadelta`. 
+    optim = Adam(cfg["learning_rate"])
     loss_fn = PHydroLoss(cfg)
     metric = tfa.metrics.RSquare()
-    patience = 10
+    patience = 5
     wait = 0
-    best = 0
+    best = -9999
+    flag = 1
+    # prepare for model with different seeds
     save_folder = cfg["outputs_path"]+"saved_model/"+\
-        cfg["model_name"]+'/'+str(i)+'/'
-    
+        cfg["model_name"]+'/'+str(num_task)+'/'+str(num_repeat)+'/'
+        
     # Prepare for validate
     if valid_split:
         nt = x.shape[1]
@@ -62,111 +66,86 @@ def train_single(model,
         x_valid, y_valid = x[:,N:], y[:,N:]
         x, y = x[:,:N], y[:,:N]
         x_valid, y_valid = load_test_data(x_valid, y_valid, cfg["seq_len"])
-        val_data = tf.data.Dataset.from_tensor_slices((
-            x_valid.reshape(-1, cfg["seq_len"], cfg["num_feat"]),
-            y_valid.reshape(-1, 1)))
-        nsample = x_valid.shape[1]
-        val_data = val_data.batch(nsample)
         valid_metric = tfa.metrics.RSquare()
 
     # train and validate
-    # NOTE: We preprare three callbacks for training,
-    #       `Adadelta` for adaptively learning rate, 
+    # NOTE: We preprare two callbacks for training:
     #       early stopping and save best model.
-    with trange(1, cfg["epochs"]+1) as pbar:
-        for epoch in pbar:
-            pbar.set_description("Training {}".format(cfg["model_name"]))
-            
-            # train
-            t0 = time.time()
-            #TODO(lilu) Adaptively iteration step setting.
-            for iter in range(0, cfg["niter"]): 
-                x_batch, y_batch = load_data(x, y, cfg)
-                with tf.GradientTape() as tape:
-                    pred = model(x_batch, training=True)
-                    loss = loss_fn(y_batch, pred)
-                grads = tape.gradient(loss, model.trainable_variables)
-                optim.apply_gradients(zip(grads, model.trainable_variables))
-                metric.update_state(y_batch, pred)
-            train_acc = metric.result().numpy()
-            metric.reset_states()
-            t1 = time.time()
-
-            # log
-            loss_str = "Epoch {} Train Loss {:.3f} time {:.2f}".format(epoch, train_acc, t1-t0)
-            print(loss_str)
-            pbar.set_postfix(loss=train_acc)
-            wait += 1
-
-            # validate
-            if valid_split:
-                if epoch % 100 == 0:
-                    # NOTE: We use larger than 3 years for validate, and we 
-                    #       calculate mean R2 of all avaliable grids to 
-                    #       determine which model is better.
-                    t0 = time.time()
-                    for x_batch_val, y_batch_val in val_data:
-                        pred = model(x_batch_val, training=False)
-                        valid_metric.update_state(y_batch_val, pred)
-                    val_acc = valid_metric.result().numpy()
-                    valid_metric.reset_states()
-                    t1 = time.time()
-
-                    # log
-                    loss_str = "Epoch {} Val Loss {:.3f} time {:.2f}".format(epoch, val_acc, t1-t0)
-                    print(loss_str)
-
-                    # save best model/early stopping according to val loss
-                    if val_acc > best:
-                        model.save_weights(save_folder)
-                        wait = 0 # release wait
-                        best = val_acc
-                        print(f'Save Epoch {epoch} Model' )
-            else:
-                # save each 100 epoch
-                if epoch % 100 == 0:
-                    model.save_weights(save_folder)
-                    print(f'Save Epoch {epoch} Model' )
-                # early stopping according to train loss
-                if train_acc > best:
-                    best = train_acc
-                    wait = 0
-            
-            """
-            # early stopping
-            if wait >= patience:
-                break
-            """
-
-def predict(x, y, scaler, cfg):
-    # 
-    print(x.shape, y.shape) #(ngrid, nt, seq_len, 9) (ngrid,nt,6)
-    mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"]) #(1, ngrid, 6)
-
-    # save folder
-    save_folder = cfg["outputs_path"]+"saved_model/"+cfg["model_name"]+'/'
-
-    y_pred = []
-    for j in range(5,6): # for each feat
-        print(j)
-        if cfg["model_name"] == 'single_task': 
-            save_folder = save_folder+str(j)+'/'
+    for _ in range(100):
         model = VanillaLSTM(cfg)
-        model.load_weights(save_folder)  
+        with trange(1, cfg["epochs"]+1) as pbar:
+            for epoch in pbar:
+                pbar.set_description(
+                    cfg["model_name"]+' '+str(num_task)+' member '+str(num_repeat))
+                
+                # train
+                t0 = time.time()
+                for iter in range(0, cfg["niter"]): 
+                    x_batch, y_batch = load_train_data(x, y, cfg)
+                    with tf.GradientTape() as tape:
+                        pred = model(x_batch, training=True)
+                        loss = loss_fn(y_batch, pred)
+                    grads = tape.gradient(loss, model.trainable_variables)
+                    optim.apply_gradients(zip(grads, model.trainable_variables))
+                    metric.update_state(y_batch, pred)
+                train_acc = metric.result().numpy()
+                metric.reset_states()
+                t1 = time.time()
 
-        t0 = time.time()  
-        tmp = []
-        r2 = []
-        for i in range(x.shape[0]):  # for each grids (samples,seq_len,nfeat)
-            print(i)
-            pred = model(x[i], training=False) # (nt, 1)
-            pred = pred*std[:,i,j]+mean[:,i,j] 
-            tmp.append(pred)
-            r2.append(r2_score(y[i,:,j],pred[:,0]))
-        mean_r2 = np.nanmean(np.array(r2))
-        t1 = time.time()
+                # log
+                loss_str = "Epoch {} Train NSE {:.3f} time {:.2f}".format(
+                    epoch, train_acc, t1-t0)
+                print(loss_str)
+                pbar.set_postfix(loss=train_acc)
 
-        print("Var {} Mean NSE {:.3f} Time {:.2f}".format(j, mean_r2, t1-t0))
-        tmp = np.stack(tmp, axis=0)
-        y_pred.append(tmp)
-    return np.concatenate(y_pred, axis=-1)
+                # refresh train if loss equal to NaN
+                # Will build fresh model and re-train it
+                # until it didn't have NaN loss.
+                if np.isnan(train_acc):
+                    break
+
+                # validate
+                if valid_split:
+                    if epoch % 20 == 0:
+                        wait += 1
+
+                        # NOTE: We use larger than 3 years for validate, and 
+                        #       used grids-mean NSE as valid metrics.
+                        #       We cannot use `tf.data.Dataset.from_tensor_slices`
+                        #       to transform nd.array to tensor. Because it will
+                        #       put all valid data into GPU, which exceed memory.
+                        t0 = time.time()
+                        for i in range(x_valid.shape[0]):
+                            pred = model(x_valid[i], training=False)
+                            valid_metric.update_state(y_valid[i], pred)
+                        val_acc = valid_metric.result().numpy()
+                        valid_metric.reset_states()
+                        t1 = time.time()
+
+                        # log in `red`
+                        loss_str = '\033[1;31m%s\033[0m' % \
+                            "Epoch {} Val NSE {:.3f} time {:.2f}".format(
+                                epoch, val_acc, t1-t0)
+                        print(loss_str)
+
+                        # save best model by val loss
+                        if val_acc > best:
+                            model.save_weights(save_folder)
+                            wait = 0 # release wait
+                            best = val_acc
+                            print('\033[1;31m%s\033[0m' % f'Save Epoch {epoch} Model')
+                else:
+                    # save best model by train loss
+                    if train_acc > best:
+                        best = train_acc
+                        wait = 0
+                        model.save_weights(save_folder)
+                        print('\033[1;31m%s\033[0m' % f'Save Epoch {epoch} Model')
+                
+                # early stopping
+                if wait >= patience:
+                    return
+            return
+            
+
+

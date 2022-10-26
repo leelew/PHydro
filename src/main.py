@@ -1,9 +1,6 @@
 import os
 import json
 
-import tensorflow as tf
-import tensorflow.keras.backend as K
-import tensorflow_addons as tfa
 import numpy as np
 import wandb
 
@@ -11,11 +8,8 @@ from config import parse_args
 from data import  Dataset
 from model import VanillaLSTM,  MTLLSTM, MTLHardLSTM
 from utils import init_fold
-from train import train_single, predict
-#seed = 42
-#tf.random.set_seed(seed)
-#np.random.seed(seed)
-
+from train import train_single
+from eval import eval_single
 
 
 def main(cfg):
@@ -46,7 +40,9 @@ def main(cfg):
     np.save("x_test.npy", x_test)
     np.save("y_test.npy", y_test)
     os.system("mv {} {}".format("*npy", cfg["inputs_path"]))
-    print(x_train.shape, y_train.shape, x_test.shape, y_test.shape)
+    print('We use {} samples for training'.format(x_train.shape[0]*x_train.shape[1]))
+    assert not np.any(np.isnan(x_train))
+    assert not np.any(np.isnan(y_train))
 
     # load scaler for inverse
     with open(cfg["inputs_path"] + 'scaler.json', "r") as j:
@@ -55,10 +51,19 @@ def main(cfg):
     # train & inference
     print("[PHydro] Start train!")
     if cfg["model_name"] == 'single_task':
-        for i in range(5,cfg["num_out"]):
-            model = VanillaLSTM(cfg)
-            train_single(model, x_train, y_train[:,:,i:i+1], cfg, i, cfg["split_ratio"])
-        y_pred = predict(x_test, y_test, scaler, cfg)
+        # repeat train for each single task 
+        # with random seed for stable predictions.
+        for i in range(cfg["num_out"]):
+            for j in range(cfg["num_repeat"]):
+                model = VanillaLSTM(cfg)
+                flag = train_single(x_train, 
+                                    y_train[:,:,i:i+1], 
+                                    cfg, 
+                                    i, 
+                                    cfg["split_ratio"], 
+                                    j)                    
+        # predict by ensemble forecast with different seed
+        y_pred = eval_single(x_test, y_test, scaler, cfg)
     else:
         pass
 
@@ -67,7 +72,6 @@ def main(cfg):
     path = cfg["outputs_path"]+'forecast/'+cfg["model_name"]+'/'
     np.save(cfg["model_name"]+'_guangdong_9km.npy', y_pred)
     os.system('mv {} {}'.format(cfg["model_name"]+'_guangdong_9km.npy', path))
-    #os.system('mv {} {}'.format("loss_"+cfg["model_name"]+'.npy', path))
 
 
 if __name__ == '__main__':

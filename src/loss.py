@@ -5,32 +5,6 @@ import tensorflow.keras.backend as K
 import tensorflow_addons as tfa
 
 
-class NSELoss(Loss):
-    def __init__(self):
-        super().__init__()
-
-    def call(self, y_true, y_pred):
-        # 1-NSE (0,inf)
-        ss_res = tf.math.reduce_mean(tf.square(y_true-y_pred))
-        ss_tot = tf.math.reduce_mean(tf.square(y_true-tf.math.reduce_mean(y_true)))
-        ss_tot = tf.cast(ss_tot, 'float32')
-        ss_res = tf.cast(ss_res, 'float32')
-        return tf.math.divide(ss_res,ss_tot)
-
-
-class NNSELoss(Loss):
-    def __init__(self):
-        super().__init__()
-
-    def call(self, y_true, y_pred):
-        # 1-NSE (0,inf)
-        ss_res = tf.math.reduce_mean(tf.square(y_true-y_pred))
-        ss_tot = tf.math.reduce_mean(tf.square(y_true-tf.math.reduce_mean(y_true)))
-        ss_tot = tf.cast(ss_tot, 'float32')
-        ss_res = tf.cast(ss_res, 'float32')
-        nse = tf.math.divide(ss_res,ss_tot)
-        return 1-tf.math.divide(1, (2-nse))
-
 
 class PHydroLoss(Loss):
     def __init__(self, cfg):
@@ -39,14 +13,10 @@ class PHydroLoss(Loss):
         self.alpha = cfg["alpha"]  # weight for physical loss (0-1)
         self.num_out = cfg["num_out"]
 
-    # must be call rather than __call__
+    # NOTE: Loss class must use call rather than __call__
     def call(self, y_true, y_pred, aux=None, resid_idx=None, optim_all=True): 
         if self.model_name in ["single_task", "multi-tasks"]:
-            # only for single task (nsample, 1)
-            #ss_res = tf.math.reduce_mean(tf.square(y_true-y_pred))
-            #ss_tot = tf.math.reduce_mean(tf.square(y_true-tf.math.reduce_mean(y_true)))
-            #ss_tot = tf.cast(ss_tot, 'float32')
-            #return tf.math.divide(ss_res,ss_tot)
+            # RMSE
             return tf.math.sqrt(mean_squared_error(y_true, y_pred))
 
         elif self.model_name in ["soft_multi_tasks"]:

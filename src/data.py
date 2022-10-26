@@ -1,8 +1,6 @@
 import json
-import math
 
 import numpy as np
-import tensorflow as tf
 
 
 
@@ -20,24 +18,25 @@ class Dataset():
     def fit(self):
         # load input data (nt, ngrid, nfeat)
         forcing, hydro, ancillary = self._load_input()
-        if self.use_ancillary:
-            ancillary = np.tile(ancillary[np.newaxis], (self.nt, 1, 1))
-            forcing = np.concatenate([forcing, ancillary], axis=-1)
+        ancillary = self._spatial_normalize(ancillary)
 
-        # remove outlier (for nonreasonable runoff)
-        hydro = self._remove_outlier(hydro, threshold=100)
+        # remove unreasonable runoff
+        # NOTE: 30mm/day may not be the best setting,
+        #       but we didn't found a better way to
+        #       remove unreasonable runoff.
+        hydro = self._remove_outlier(hydro, threshold=30)
 
         # make aux data (precip(t), swvl(t-1))
         # NOTE: Before normalization to keep unit mm
         precip = np.nansum(forcing[:,:,:2], axis=-1, keepdims=True)
         swvl_prev = 0
         soil_depth = [70, 210, 720, 1864.6] # mm
-        for i in range(4): swvl_prev+=hydro[:,:,i:i+1]*soil_depth[i]
+        for i in range(4): 
+            swvl_prev+=hydro[:,:,i:i+1]*soil_depth[i]
         aux = np.concatenate([precip[1:], swvl_prev[:-1]], axis=-1)
 
         # get scaler
         if self.mode == 'train':
-            #scaler = self._get_minmax_scaler(forcing, hydro)
             scaler = self._get_z_scaler(forcing, hydro)
             self._save_scaler(self.inputs_path, scaler)
         else:
@@ -45,28 +44,24 @@ class Dataset():
             scaler = self._load_scaler(self.inputs_path)
 
         # normalize input for train/valid/test
+        # NOTE: Z-score normalize is much better than 
+        #       minmax normalize based on prelinminary test.
         #forcing = self._minmax_normalize(forcing, scaler, is_feat=True)
         forcing = self._z_normalize(forcing, scaler, is_feat=True)
 
         # normalize output (for train dataset)
         if self.mode == 'train':
-            #hydro = self._minmax_normalize(hydro, scaler, is_feat=False)
             hydro = self._z_normalize(hydro, scaler, is_feat=False)
+
+        # (Option) add ancillary
+        if self.use_ancillary:
+            ancillary = np.tile(ancillary[np.newaxis], (forcing.shape[0], 1, 1))
+            forcing = np.concatenate([forcing, ancillary], axis=-1)
 
         # make training/test data
         if self.mode in ['train']:
             return np.transpose(forcing, (1,0,2)), np.transpose(hydro, (1,0,2))
-            # (nt_, ngrid, nfeat)
-            N = int(self.split_ratio*hydro.shape[0])
-            x_train, y_train = forcing[:N], hydro[:N]
-            x_valid, y_valid = forcing[N:], hydro[N:]
-            # (ngrid*nyears*1/offset, seq_len, nfeat)
-            x_train, y_train = self._split_into_batch(x_train, y_train, self.seq_len, 0.5)
-            x_valid, y_valid = self._split_into_batch(x_valid, y_valid, self.seq_len, 0.5)
-            return x_train, y_train, x_valid, y_valid
         else:
-            # (ngrids, nsamples/1, seq_len, nfeat) 
-            # FIXME: Maybe change interval to 365.
             x_test, y_test = self._make_inference_data(
                 forcing, hydro, self.seq_len, 1, self.window_size)
             return x_test, y_test
@@ -139,6 +134,12 @@ class Dataset():
                 np.array(scaler["y_std"]))
         return input
 
+    def _spatial_normalize(self, static):
+        # (ngrid, nfeat) for static data
+        mean = np.nanmean(static, axis=(0), keepdims=True)
+        std = np.nanstd(static, axis=(0), keepdims=True)
+        return (static-mean)/std
+
     def _minmax_normalize(self, input, scaler, is_feat):
         """normalize features using pre-computed statistics."""
         if is_feat:
@@ -198,15 +199,12 @@ class Dataset():
         return x_new, y_new
 
     def _split_into_batch(self, X, y, seq_len=365, offset=1, window_size=0):
-        """
-        split training data into batches with size of batch_size
-        :param data_array: [numpy array] array of training data with dims [nseg,
-        ndates, nfeat]
-        :param seq_len: [int] length of sequences (i.e., 365)
-        :param offset: [float] 0-1, how to offset the batches (e.g., 0.5 means that
-        the first batch will be 0-365 and the second will be 182-547)
-        :return: [numpy array] batched data with dims [nbatches, nseg, seq_len
-        (batch_size), nfeat]
+        """split training data into batches with size of batch_size
+        
+        Params
+        ------
+            offset: [float] 0-1, how to offset the batches (e.g., 0.5 means that
+                    the first batch will be 0-365 and the second will be 182-547)
         """
         #(nt_, ngrid, nfeat)
         x_batchs, y_batchs = [], []
@@ -228,7 +226,6 @@ class Dataset():
         y_batchs = np.concatenate(y_batchs, axis=1) #(seq_len,ngrid*nyears*1/offset,nfeat)
         print(x_batchs.shape, y_batchs.shape)
         return np.transpose(x_batchs,(1,0,2)), np.transpose(y_batchs,(1,0,2))
-
 
     def __len__(self):
         return self.nt
