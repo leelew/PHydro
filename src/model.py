@@ -1,27 +1,23 @@
-from numpy import gradient
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras import Model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Layer
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Layer, Input
 import tensorflow.keras.backend as K
-import numpy as np
 
 
 
 class VanillaLSTM(Model):
-    """LSTM with single task"""
-
     def __init__(self, cfg):
         super().__init__()
-        self.lstm = LSTM(20,#8*cfg["n_filter_factors"], 
-                         return_sequences=False, 
-                         recurrent_dropout=cfg["dropout_rate"])
+        self.lstm = LSTM(64, return_sequences=False)
+        self.drop = Dropout(cfg["dropout_rate"])
         self.dense = Dense(1)
 
     def call(self, inputs):
         x = self.lstm(inputs)
+        x = self.drop(x)
         x = self.dense(x)
         return x
-
 
 
 class MTLLSTM(Model):

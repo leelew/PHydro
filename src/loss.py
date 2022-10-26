@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.losses import Loss, mean_squared_error
 import tensorflow.keras.backend as K
+import tensorflow_addons as tfa
 
 
 
@@ -12,10 +13,11 @@ class PHydroLoss(Loss):
         self.alpha = cfg["alpha"]  # weight for physical loss (0-1)
         self.num_out = cfg["num_out"]
 
-    # must be call rather than __call__
+    # NOTE: Loss class must use call rather than __call__
     def call(self, y_true, y_pred, aux=None, resid_idx=None, optim_all=True): 
         if self.model_name in ["single_task", "multi-tasks"]:
-            return mean_squared_error(y_true, y_pred)
+            # RMSE
+            return tf.math.sqrt(mean_squared_error(y_true, y_pred))
 
         elif self.model_name in ["soft_multi_tasks"]:
             # Cal physical loss
