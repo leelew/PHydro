@@ -44,4 +44,4 @@ def eval_single(x, y, scaler, cfg):
             "Var {} Median NSE {:.3f}".format(j, np.nanmedian(r2_ens)))
 
         y_pred_ens.append(y_pred_seed)
-    return np.concatenate(y_pred, axis=-1)
+    return np.concatenate(y_pred_ens, axis=-1)

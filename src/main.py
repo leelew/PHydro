@@ -56,12 +56,12 @@ def main(cfg):
         for i in range(cfg["num_out"]):
             for j in range(cfg["num_repeat"]):
                 model = VanillaLSTM(cfg)
-                flag = train_single(x_train, 
-                                    y_train[:,:,i:i+1], 
-                                    cfg, 
-                                    i, 
-                                    cfg["split_ratio"], 
-                                    j)                    
+                train_single(x_train, 
+                             y_train[:,:,i:i+1], 
+                             cfg, 
+                             i, 
+                             cfg["split_ratio"], 
+                             j)                    
         # predict by ensemble forecast with different seed
         y_pred = eval_single(x_test, y_test, scaler, cfg)
     else:
