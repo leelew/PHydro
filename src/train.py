@@ -1,28 +1,25 @@
 import time
-import os
 
 from tqdm import trange
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam
 import tensorflow_addons as tfa
-from sklearn.metrics import r2_score
 
 from data_gen import load_train_data, load_test_data
-from loss import PHydroLoss
-from model import VanillaLSTM
+from loss import RMSELoss, MassConserveLoss
+from model import VanillaLSTM, MTLLSTM
 
 
-
-# NOTE: If we add decorator `tf.function` of `train_step`, and 
-#       we try to trained model twice. It will raise error: 
-#       "with ValueError: tf.function only supports singleton 
-#       tf.Variables created on the first call. Make sure the 
-#       tf.Variable is only created once or created outside 
-#       tf.function". Thus, `train_step` only used for multi-task 
+# NOTE: If we add decorator `tf.function` of `train_step`, and
+#       we try to trained model twice. It will raise error:
+#       "with ValueError: tf.function only supports singleton
+#       tf.Variables created on the first call. Make sure the
+#       tf.Variable is only created once or created outside
+#       tf.function". Thus, `train_step` only used for multi-task
 #       model to speed up trainning. see `train_multi`.
-@tf.function 
-def train_step(x, y, model,loss_fn, optim, metric):
+@tf.function
+def train_step(x, y, model, loss_fn, optim, metric):
     with tf.GradientTape() as tape:
         pred = model(x, training=True)
         loss = loss_fn(y, pred)
@@ -37,54 +34,71 @@ def test_step(x, y, model, metric):
     metric.update_state(y, pred)
 
 
-
-def train_single(x, 
-                 y, 
-                 cfg, 
-                 num_task, 
-                 valid_split=None,
-                 num_repeat=None):
+def train(x,
+          y,
+          aux,
+          scaler,
+          cfg,
+          num_repeat,
+          num_task=None,
+          valid_split=True):
     # Prepare for training
-    # NOTE: Only use `Adam`, we didn't apply adaptively 
+    # NOTE: Only use `Adam`, we didn't apply adaptively
     #       learing rate schedule. We found `Adam` perform
-    #       much better than `Adagrad`, `Adadelta`. 
+    #       much better than `Adagrad`, `Adadelta`.
     optim = Adam(cfg["learning_rate"])
-    loss_fn = PHydroLoss(cfg)
     metric = tfa.metrics.RSquare()
     patience = 5
     wait = 0
     best = -9999
-    flag = 1
-    # prepare for model with different seeds
-    save_folder = cfg["outputs_path"]+"saved_model/"+\
-        cfg["model_name"]+'/'+str(num_task)+'/'+str(num_repeat)+'/'
-        
+
+    # prepare save folder for models with different seeds
+    if cfg["model_name"] == 'single_task':
+        save_folder = cfg["outputs_path"]+"saved_model/" +\
+            cfg["model_name"]+'/'+str(num_task)+'/'+str(num_repeat)+'/'
+    else:
+        save_folder = cfg["outputs_path"]+"saved_model/" +\
+            cfg["model_name"]+'/'+str(num_repeat)+'/'
+
     # Prepare for validate
     if valid_split:
         nt = x.shape[1]
-        N = int(nt*valid_split)
-        x_valid, y_valid = x[:,N:], y[:,N:]
-        x, y = x[:,:N], y[:,:N]
-        x_valid, y_valid = load_test_data(x_valid, y_valid, cfg["seq_len"])
+        N = int(nt*cfg["split_ratio"])
+        x_valid, y_valid = x[:, N:], y[:, N:]
+        x, y = x[:, :N], y[:, :N]
+        x_valid, y_valid = load_test_data(cfg, x_valid, y_valid)
         valid_metric = tfa.metrics.RSquare()
 
     # train and validate
     # NOTE: We preprare two callbacks for training:
     #       early stopping and save best model.
     for _ in range(100):
-        model = VanillaLSTM(cfg)
+        # prepare models
+        if cfg["model_name"] == 'single_task':
+            model = VanillaLSTM(cfg)
+        elif cfg["model_name"] in ['multi_tasks','soft_multi_tasks']:
+            model = MTLLSTM(cfg)
+            
         with trange(1, cfg["epochs"]+1) as pbar:
             for epoch in pbar:
                 pbar.set_description(
                     cfg["model_name"]+' '+str(num_task)+' member '+str(num_repeat))
-                
+
                 # train
+                MCLoss = 0
                 t0 = time.time()
-                for iter in range(0, cfg["niter"]): 
-                    x_batch, y_batch = load_train_data(x, y, cfg)
+                for iter in range(0, cfg["niter"]):
+                    x_batch, y_batch, aux_batch, \
+                        mean_batch, std_batch = load_train_data(cfg, x, y, aux, scaler)
                     with tf.GradientTape() as tape:
                         pred = model(x_batch, training=True)
-                        loss = loss_fn(y_batch, pred)
+                        mse_loss = RMSELoss()(y_batch, pred)
+                        phy_loss = MassConserveLoss(mean_batch, std_batch)(aux_batch, pred)
+                        MCLoss+=phy_loss
+                        if cfg["model_name"] in ['single_task', 'multi_tasks']:
+                            loss = mse_loss
+                        elif cfg["model_name"] in ["soft_multi_tasks"]:
+                            loss = (1-cfg["alpha"])*mse_loss+(cfg["alpha"])*phy_loss
                     grads = tape.gradient(loss, model.trainable_variables)
                     optim.apply_gradients(zip(grads, model.trainable_variables))
                     metric.update_state(y_batch, pred)
@@ -93,8 +107,8 @@ def train_single(x,
                 t1 = time.time()
 
                 # log
-                loss_str = "Epoch {} Train NSE {:.3f} time {:.2f}".format(
-                    epoch, train_acc, t1-t0)
+                loss_str = "Epoch {} Train NSE {:.3f} MC Loss {:.3f} time {:.2f}".format(
+                    epoch, train_acc, MCLoss/cfg["niter"],t1-t0)
                 print(loss_str)
                 pbar.set_postfix(loss=train_acc)
 
@@ -109,7 +123,7 @@ def train_single(x,
                     if epoch % 20 == 0:
                         wait += 1
 
-                        # NOTE: We use larger than 3 years for validate, and 
+                        # NOTE: We use larger than 3 years for validate, and
                         #       used grids-mean NSE as valid metrics.
                         #       We cannot use `tf.data.Dataset.from_tensor_slices`
                         #       to transform nd.array to tensor. Because it will
@@ -131,21 +145,21 @@ def train_single(x,
                         # save best model by val loss
                         if val_acc > best:
                             model.save_weights(save_folder)
-                            wait = 0 # release wait
+                            wait = 0  # release wait
                             best = val_acc
-                            print('\033[1;31m%s\033[0m' % f'Save Epoch {epoch} Model')
+                            print('\033[1;31m%s\033[0m' %
+                                  f'Save Epoch {epoch} Model')
                 else:
                     # save best model by train loss
                     if train_acc > best:
                         best = train_acc
                         wait = 0
                         model.save_weights(save_folder)
-                        print('\033[1;31m%s\033[0m' % f'Save Epoch {epoch} Model')
-                
+                        print('\033[1;31m%s\033[0m' %
+                              f'Save Epoch {epoch} Model')
+
                 # early stopping
                 if wait >= patience:
                     return
             return
-            
-
 

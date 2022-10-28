@@ -14,25 +14,28 @@ import numpy as np
 #       Kratzert et al. (2019), HESS is better.    
 #  
 # Fang and Shen (2020), JHM 
-def load_train_data(x, y, cfg):
+def load_train_data(cfg, x, y, aux=None, scaler=None):
     ngrid, nt, _ = x.shape
+    mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"])
     idx_grid = np.random.randint(0, ngrid, cfg["batch_size"])
     idx_time = np.random.randint(0, nt-cfg["seq_len"], 1)[0]
     x = x[idx_grid, idx_time:idx_time+cfg["seq_len"]]
     y = y[idx_grid, idx_time+cfg["seq_len"]-1]
-    return x, y
+    aux = aux[idx_grid, idx_time+cfg["seq_len"]-1]
+    mean = mean[0,idx_grid]
+    std = std[0,idx_grid]
+    return x, y, aux, mean, std
 
 
-def load_test_data(X, y, seq_length, interval=1):
-    ngrid, nt, num_features = X.shape
-    _, _, num_out = y.shape
-    n = (nt-seq_length+1) // interval
 
-    x_new = np.zeros((ngrid, n, seq_length, num_features))*np.nan
-    y_new = np.zeros((ngrid, n, num_out))*np.nan
+def load_test_data(cfg, x, y):
+    ngrid, nt, _ = x.shape
+    n = (nt-cfg["seq_len"]+1)
+    x_new = np.zeros((ngrid, n, cfg["seq_len"], cfg["num_feat"]))*np.nan
+    y_new = np.zeros((ngrid, n, cfg["num_out"]))*np.nan
     for i in range(n):
-        x_new[:,i] = X[:,i*interval:i*interval+seq_length]
-        y_new[:,i] = y[:,i*interval+seq_length-1]
+        x_new[:,i] = x[:,i:i+cfg["seq_len"]]
+        y_new[:,i] = y[:,i+cfg["seq_len"]-1]
     return x_new, y_new
 
 

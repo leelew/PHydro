@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument('--num_feat', type=int, default=24, choices=[9, 24])
 
     # model
-    parser.add_argument('--model_name', type=str, default="single_task")
+    parser.add_argument('--model_name', type=str, default="soft_multi_tasks")
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--niter', type=int, default=100)

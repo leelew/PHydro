@@ -58,13 +58,18 @@ class Dataset():
             ancillary = np.tile(ancillary[np.newaxis], (forcing.shape[0], 1, 1))
             forcing = np.concatenate([forcing, ancillary], axis=-1)
 
+        # crop forcing/hydro to correspond to aux data
+        forcing, hydro = forcing[1:], hydro[1:]
+
         # make training/test data
-        if self.mode in ['train']:
-            return np.transpose(forcing, (1,0,2)), np.transpose(hydro, (1,0,2))
+        if self.mode == 'train':
+            return np.transpose(forcing, (1,0,2)), \
+                   np.transpose(hydro, (1,0,2)), \
+                   np.transpose(aux, (1,0,2))
         else:
-            x_test, y_test = self._make_inference_data(
-                forcing, hydro, self.seq_len, 1, self.window_size)
-            return x_test, y_test
+            x_test, y_test, aux_test = self._make_inference_data(
+                forcing, hydro, aux, self.seq_len, 1, self.window_size)
+            return x_test, y_test, aux_test
 
     def _load_input(self):
         forcing = np.load(self.inputs_path +
@@ -150,18 +155,20 @@ class Dataset():
                 np.array(scaler["y_max"])-np.array(scaler["y_min"]))
         return input
 
-    def _make_inference_data(self, X, y, seq_len, interval, window_size):
-        x_, y_ = [], []
+    def _make_inference_data(self, X, y, aux=None, seq_len=365, interval=1, window_size=0):
+        x_, y_, aux_ = [], [], []
         for i in range(X.shape[1]):  # parfor each grids
-            tmpx, tmpy = self._reshape_1d_data(
-                X[:,i], y[:,i], seq_len, interval, window_size)  # (nt, nfeat)
+            tmpx, tmpy, tmp_aux = self._reshape_1d_data(
+                X[:,i], y[:,i], aux[:,i], seq_len, interval, window_size)  # (nt, nfeat)
             x_.append(tmpx)
             y_.append(tmpy)
+            aux_.append(tmp_aux)
         x_ = np.stack(x_, axis=0)
         y_ = np.stack(y_, axis=0)
-        return x_, y_  # (ngrids, nsamples, seq_len, nfeat)
+        aux_ = np.stack(aux_, axis=0)
+        return x_, y_, aux_ # (ngrids, nsamples, seq_len, nfeat)
 
-    def _reshape_1d_data(self, X, y, seq_length, interval=365, window_size=0):
+    def _reshape_1d_data(self, X, y, aux=None, seq_length=365, interval=365, window_size=0):
         """reshape data into LSTM many-to-one input samples
 
         Parameters
@@ -192,11 +199,13 @@ class Dataset():
 
         x_new = np.zeros((n, seq_length, num_features))*np.nan
         y_new = np.zeros((n, num_out))*np.nan
+        aux_new = np.zeros((n, 2))*np.nan
         
         for i in range(n):
-            x_new[i] = X[i*interval:i*interval+seq_length, :]
-            y_new[i] = y[i*interval+seq_length-1, :]
-        return x_new, y_new
+            x_new[i] = X[i*interval:i*interval+seq_length]
+            y_new[i] = y[i*interval+seq_length-1]
+            aux_new[i] = aux[i*interval+seq_length-1]
+        return x_new, y_new, aux_new
 
     def _split_into_batch(self, X, y, seq_len=365, offset=1, window_size=0):
         """split training data into batches with size of batch_size
