@@ -28,15 +28,20 @@ def load_train_data(cfg, x, y, aux=None, scaler=None):
 
 
 
-def load_test_data(cfg, x, y):
+def load_test_data(cfg, x, y, aux, scaler):
     ngrid, nt, _ = x.shape
     n = (nt-cfg["seq_len"]+1)
     x_new = np.zeros((ngrid, n, cfg["seq_len"], cfg["num_feat"]))*np.nan
     y_new = np.zeros((ngrid, n, cfg["num_out"]))*np.nan
+    aux_new = np.zeros((ngrid, n, 2))*np.nan
+    mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"]) #(1, ngrid, nout)
+    mean = np.transpose(mean, (1,0,2))
+    std = np.transpose(std, (1,0,2))
     for i in range(n):
         x_new[:,i] = x[:,i:i+cfg["seq_len"]]
         y_new[:,i] = y[:,i+cfg["seq_len"]-1]
-    return x_new, y_new
+        aux_new[:,i] = aux[:,i+cfg["seq_len"]-1]   
+    return x_new, y_new, aux_new, np.tile(mean, (1, n, 1)), np.tile(std, (1,n,1))
 
 
 # Kratzert et al.(2019), HESS

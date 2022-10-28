@@ -8,7 +8,7 @@ import tensorflow_addons as tfa
 
 from data_gen import load_train_data, load_test_data
 from loss import RMSELoss, MassConserveLoss
-from model import VanillaLSTM, MTLLSTM
+from model import MTLHardLSTM, VanillaLSTM, MTLLSTM
 
 
 # NOTE: If we add decorator `tf.function` of `train_step`, and
@@ -41,6 +41,7 @@ def train(x,
           cfg,
           num_repeat,
           num_task=None,
+          resid_idx=None,
           valid_split=True):
     # Prepare for training
     # NOTE: Only use `Adam`, we didn't apply adaptively
@@ -64,9 +65,9 @@ def train(x,
     if valid_split:
         nt = x.shape[1]
         N = int(nt*cfg["split_ratio"])
-        x_valid, y_valid = x[:, N:], y[:, N:]
-        x, y = x[:, :N], y[:, :N]
-        x_valid, y_valid = load_test_data(cfg, x_valid, y_valid)
+        x_valid, y_valid, aux_valid = x[:, N:], y[:, N:], aux[:, N:]
+        x, y, aux = x[:, :N], y[:, :N], aux[:, :N]
+        x_valid, y_valid, aux_valid, mean_valid, std_valid = load_test_data(cfg, x_valid, y_valid, aux_valid, scaler)
         valid_metric = tfa.metrics.RSquare()
 
     # train and validate
@@ -78,6 +79,8 @@ def train(x,
             model = VanillaLSTM(cfg)
         elif cfg["model_name"] in ['multi_tasks','soft_multi_tasks']:
             model = MTLLSTM(cfg)
+        else:
+            model = MTLHardLSTM(cfg, resid_idx)
             
         with trange(1, cfg["epochs"]+1) as pbar:
             for epoch in pbar:
@@ -91,11 +94,17 @@ def train(x,
                     x_batch, y_batch, aux_batch, \
                         mean_batch, std_batch = load_train_data(cfg, x, y, aux, scaler)
                     with tf.GradientTape() as tape:
-                        pred = model(x_batch, training=True)
+                        if cfg["model_name"] == 'hard_multi_tasks':
+                            pred, a = model(x_batch, aux_batch, mean_batch, std_batch, training=True)
+                        else:
+                            pred = model(x_batch, training=True)
+                        print(a)
                         mse_loss = RMSELoss()(y_batch, pred)
+                        # FIXME: Mass conserve loss cannot be calculated for `single_task`
+                        #        during training, because it only predict one tasks.
                         phy_loss = MassConserveLoss(mean_batch, std_batch)(aux_batch, pred)
                         MCLoss+=phy_loss
-                        if cfg["model_name"] in ['single_task', 'multi_tasks']:
+                        if cfg["model_name"] in ['single_task', 'multi_tasks', 'hard_multi_tasks']:
                             loss = mse_loss
                         elif cfg["model_name"] in ["soft_multi_tasks"]:
                             loss = (1-cfg["alpha"])*mse_loss+(cfg["alpha"])*phy_loss
@@ -130,7 +139,10 @@ def train(x,
                         #       put all valid data into GPU, which exceed memory.
                         t0 = time.time()
                         for i in range(x_valid.shape[0]):
-                            pred = model(x_valid[i], training=False)
+                            if cfg["model_name"] == 'hard_multi_tasks':
+                                pred = model(x_valid[i], aux_valid[i], mean_valid[i], std_valid[i], training=False)
+                            else:
+                                pred = model(x_valid[i], training=False)
                             valid_metric.update_state(y_valid[i], pred)
                         val_acc = valid_metric.result().numpy()
                         valid_metric.reset_states()

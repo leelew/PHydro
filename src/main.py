@@ -22,7 +22,7 @@ def main(cfg):
     # logging params in wandb
     default = dict(  # model
         model_name=cfg["model_name"],
-        n_filter_factors=cfg["n_filter_factors"],
+        hidden_size=cfg["hidden_size"],
         # train
         batch_size=cfg["batch_size"],
         epochs=cfg["epochs"],
@@ -60,9 +60,13 @@ def main(cfg):
         for i in range(cfg["num_out"]):
             for j in range(cfg["num_repeat"]):
                 train(x_train, y_train[:,:,i:i+1], aux_train, 
-                    scaler, cfg, j, i)
+                    scaler, cfg, num_repeat=j, num_task=i)
         # predict by ensemble forecast with different seed
         y_pred = eval_single(x_test, y_test, scaler, cfg)
+    elif cfg["model_name"] == 'hard_multi_tasks':
+        for j in range(cfg["num_repeat"]):
+            train(x_train, y_train, aux_train, 
+                scaler, cfg, num_repeat=j, resid_idx=cfg["resid_idx"])
     else:
         for j in range(cfg["num_repeat"]):
             train(x_train, y_train, aux_train, scaler, cfg, j)
