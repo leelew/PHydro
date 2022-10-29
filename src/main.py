@@ -30,18 +30,28 @@ def main(cfg):
     wandb.init("PHydro", config=default, allow_val_change=True)
 
     # load train/valid/test data
+
     print("[PHydro] Loading train/valid/test datasets")
-    f = Dataset(cfg, mode='train')
-    x_train, y_train, aux_train = f.fit()
-    f = Dataset(cfg, mode='test')
-    x_test, y_test, aux_test = f.fit()
-    np.save("x_train.npy", x_train)
-    np.save("y_train.npy", y_train)
-    np.save("aux_train.npy", aux_train)
-    np.save("x_test.npy", x_test)
-    np.save("y_test.npy", y_test)
-    np.save("aux_test.npy", aux_test)
-    os.system("mv {} {}".format("*npy", cfg["inputs_path"]))
+    if cfg["reuse_input"]:
+        x_train = np.load(cfg["inputs_path"]+'x_train.npy')
+        y_train = np.load(cfg["inputs_path"]+'y_train.npy')
+        aux_train = np.load(cfg["inputs_path"]+'aux_train.npy')
+        x_test = np.load(cfg["inputs_path"]+'x_test.npy')
+        y_test = np.load(cfg["inputs_path"]+'y_test.npy')
+        aux_test = np.load(cfg["inputs_path"]+'aux_test.npy')
+    else:
+        f = Dataset(cfg, mode='train')
+        x_train, y_train, aux_train = f.fit()
+        f = Dataset(cfg, mode='test')
+        x_test, y_test, aux_test = f.fit()
+        
+        np.save("x_train.npy", x_train)
+        np.save("y_train.npy", y_train)
+        np.save("aux_train.npy", aux_train)
+        np.save("x_test.npy", x_test)
+        np.save("y_test.npy", y_test)
+        np.save("aux_test.npy", aux_test)
+        os.system("mv {} {}".format("*npy", cfg["inputs_path"]))
     print('We use {} samples for training'.format(
         x_train.shape[0]*x_train.shape[1]))
     assert not np.any(np.isnan(x_train))
