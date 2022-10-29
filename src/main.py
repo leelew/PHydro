@@ -22,7 +22,7 @@ def main(cfg):
     # logging params in wandb
     default = dict(  # model
         model_name=cfg["model_name"],
-        n_filter_factors=cfg["n_filter_factors"],
+        hidden_size=cfg["hidden_size"],
         # train
         batch_size=cfg["batch_size"],
         epochs=cfg["epochs"],
@@ -30,18 +30,28 @@ def main(cfg):
     wandb.init("PHydro", config=default, allow_val_change=True)
 
     # load train/valid/test data
+
     print("[PHydro] Loading train/valid/test datasets")
-    f = Dataset(cfg, mode='train')
-    x_train, y_train, aux_train = f.fit()
-    f = Dataset(cfg, mode='test')
-    x_test, y_test, aux_test = f.fit()
-    np.save("x_train.npy", x_train)
-    np.save("y_train.npy", y_train)
-    np.save("aux_train.npy", aux_train)
-    np.save("x_test.npy", x_test)
-    np.save("y_test.npy", y_test)
-    np.save("aux_test.npy", aux_test)
-    os.system("mv {} {}".format("*npy", cfg["inputs_path"]))
+    if cfg["reuse_input"]:
+        x_train = np.load(cfg["inputs_path"]+'x_train.npy')
+        y_train = np.load(cfg["inputs_path"]+'y_train.npy')
+        aux_train = np.load(cfg["inputs_path"]+'aux_train.npy')
+        x_test = np.load(cfg["inputs_path"]+'x_test.npy')
+        y_test = np.load(cfg["inputs_path"]+'y_test.npy')
+        aux_test = np.load(cfg["inputs_path"]+'aux_test.npy')
+    else:
+        f = Dataset(cfg, mode='train')
+        x_train, y_train, aux_train = f.fit()
+        f = Dataset(cfg, mode='test')
+        x_test, y_test, aux_test = f.fit()
+        
+        np.save("x_train.npy", x_train)
+        np.save("y_train.npy", y_train)
+        np.save("aux_train.npy", aux_train)
+        np.save("x_test.npy", x_test)
+        np.save("y_test.npy", y_test)
+        np.save("aux_test.npy", aux_test)
+        os.system("mv {} {}".format("*npy", cfg["inputs_path"]))
     print('We use {} samples for training'.format(
         x_train.shape[0]*x_train.shape[1]))
     assert not np.any(np.isnan(x_train))
@@ -60,9 +70,13 @@ def main(cfg):
         for i in range(cfg["num_out"]):
             for j in range(cfg["num_repeat"]):
                 train(x_train, y_train[:,:,i:i+1], aux_train, 
-                    scaler, cfg, j, i)
+                    scaler, cfg, num_repeat=j, num_task=i)
         # predict by ensemble forecast with different seed
         y_pred = eval_single(x_test, y_test, scaler, cfg)
+    elif cfg["model_name"] == 'hard_multi_tasks':
+        for j in range(cfg["num_repeat"]):
+            train(x_train, y_train, aux_train, 
+                scaler, cfg, num_repeat=j, resid_idx=cfg["resid_idx"])
     else:
         for j in range(cfg["num_repeat"]):
             train(x_train, y_train, aux_train, scaler, cfg, j)
