@@ -1,13 +1,11 @@
-import xdrlib
 import tensorflow as tf
 from tensorflow.keras import Model
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Layer
-import tensorflow.keras.backend as K
 from tensorflow import math
 
 
-class VanillaLSTM(Model):
 
+class VanillaLSTM(Model):
     def __init__(self, cfg):
         super().__init__()
         self.lstm = LSTM(cfg["hidden_size"], return_sequences=False)
@@ -35,13 +33,20 @@ class MTLLSTM(Model):
         for i in range(cfg["num_out"]):
             self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))
 
-    def call(self, inputs):
+    def call(self, inputs, aux, mean, std):
         x = self.shared_layer(inputs)  # shared layer
         x = self.drop(x)
         pred = []
         for i in range(self.num_out):  # each heads
             pred.append(self.head_layers[i](x))
-        return tf.concat(pred, axis=-1)
+        pred = tf.concat(pred, axis=-1)
+
+        a = math.multiply(pred, std) + mean
+        soil_depth = [70, 210, 720, 1864.6]  # mm
+        # Transform soil moisture in unit mm
+        swvl = math.multiply(a[:, :4], soil_depth)
+        #print(math.reduce_sum(swvl, axis=-1)+a[:,4]+a[:,5])
+        return pred
 
 
 class MassConsLayer(Layer):
@@ -98,15 +103,13 @@ class MassConsLayer(Layer):
         inputs = tf.concat([swvl, inputs[:, 4:]], axis=-1)
         # Calculate residual outputs
         inputs = self._slice_matrix(inputs, self.idx)
-        mass_prev = math.reduce_sum(aux, axis=-1)
-        mass_now = math.reduce_sum(inputs, axis=-1)
-        mass_resid = mass_prev-mass_now
+        mass_resid = aux-math.reduce_sum(inputs, axis=-1)
         mass_resid = mass_resid[:, tf.newaxis]
         # Output
         inputs = self._fill_matrix(inputs, self.idx, mass_resid)
         swvl = tf.divide(inputs[:, :4], soil_depth)  # mm3/mm3
         inputs = tf.concat([swvl, inputs[:, 4:]], axis=-1)
-        inputs = (inputs-mean)/std
+        inputs = math.divide(inputs-mean, std)
         return inputs
 
     def compute_output_shape(self, input_shape):
@@ -116,7 +119,7 @@ class MassConsLayer(Layer):
 class MTLHardLSTM(Model):
     """LSTM with hard physical constrain through residual layer"""
 
-    def __init__(self, cfg, resid_idx):
+    def __init__(self, cfg):
         super().__init__()
         self.num_out = cfg["num_out"]
         self.shared_layer = LSTM(cfg["hidden_size"],
