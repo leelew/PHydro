@@ -5,10 +5,8 @@ def parse_args():
     """Hyperparameters"""
     parser = argparse.ArgumentParser()
     # path
-    parser.add_argument('--inputs_path', type=str,
-                        default="/data/lilu/PHydro/input/")
-    parser.add_argument('--outputs_path', type=str,
-                        default="/data/lilu/PHydro/output/")
+    parser.add_argument('--inputs_path', type=str, default="/data/lilu/PHydro/input/")
+    parser.add_argument('--outputs_path', type=str, default="/data/lilu/PHydro/output/")
     parser.add_argument('--work_path', type=str, default="/data/lilu/PHydro")
 
     # data
@@ -23,7 +21,7 @@ def parse_args():
     parser.add_argument('--lam', type=int, default=0.01)
 
     # model
-    parser.add_argument('--model_name', type=str, default="hard_multi_tasks")
+    parser.add_argument('--model_name', type=str, default="hard_multi_tasks_v2")
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--niter', type=int, default=100)

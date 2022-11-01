@@ -27,13 +27,12 @@ def load_train_data(cfg, x, y, aux=None, scaler=None):
     return x, y, aux, mean, std
 
 
-
 def load_test_data(cfg, x, y, aux, scaler):
     ngrid, nt, _ = x.shape
     n = (nt-cfg["seq_len"]+1)
     x_new = np.zeros((ngrid, n, cfg["seq_len"], cfg["num_feat"]))*np.nan
     y_new = np.zeros((ngrid, n, cfg["num_out"]))*np.nan
-    aux_new = np.zeros((ngrid, n, 2))*np.nan
+    aux_new = np.zeros((ngrid, n))*np.nan
     mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"]) #(1, ngrid, nout)
     mean = np.transpose(mean, (1,0,2))
     std = np.transpose(std, (1,0,2))
