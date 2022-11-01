@@ -69,10 +69,6 @@ def main(cfg):
                     scaler, cfg, num_repeat=j, num_task=i)
         # predict by ensemble forecast with different seed
         y_pred = eval_single(x_test, y_test, scaler, cfg)
-    elif cfg["model_name"] == 'hard_multi_tasks':
-        for j in range(cfg["num_repeat"]):
-            train(x_train, y_train, aux_train, 
-                scaler, cfg, num_repeat=j, resid_idx=cfg["resid_idx"])
     else:
         for j in range(cfg["num_repeat"]):
             train(x_train, y_train, aux_train, scaler, cfg, j)

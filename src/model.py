@@ -40,12 +40,6 @@ class MTLLSTM(Model):
         for i in range(self.num_out):  # each heads
             pred.append(self.head_layers[i](x))
         pred = tf.concat(pred, axis=-1)
-
-        a = math.multiply(pred, std) + mean
-        soil_depth = [70, 210, 720, 1864.6]  # mm
-        # Transform soil moisture in unit mm
-        swvl = math.multiply(a[:, :4], soil_depth)
-        #print(math.reduce_sum(swvl, axis=-1)+a[:,4]+a[:,5])
         return pred
 
 
@@ -141,3 +135,47 @@ class MTLHardLSTM(Model):
         pred = tf.concat(pred, axis=-1)
         pred = self.resid_layer(pred, aux, mean, std)
         return pred
+
+
+class MTLHardLSTM_v2(Model):
+    def __init__(self, cfg):
+        super().__init__()
+        self.num_out = cfg["num_out"]
+        self.shared_layer = LSTM(cfg["hidden_size"],
+                                 return_sequences=False,
+                                 name='shared_layer')
+        self.drop = Dropout(cfg["dropout_rate"])
+        self.head_layers = []
+        for i in range(cfg["num_out"]):
+            self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))
+
+    def call(self, inputs, aux, mean, std):
+        soil_depth = [70, 210, 720, 1864.6]  # mm
+
+        x = self.shared_layer(inputs)  # shared layer
+        x = self.drop(x)
+        pred = []
+        for i in range(self.num_out):  # each heads
+            pred.append(self.head_layers[i](x))
+        pred = tf.concat(pred, axis=-1)
+
+        # cal water budget
+        pred = math.multiply(pred, std) + mean
+        swvl = math.multiply(pred[:, :4], soil_depth)
+        pred = tf.concat([swvl, pred[:, 4:]], axis=-1)
+        w_b = aux-math.reduce_sum(pred, axis=-1)
+
+        # cal ratio
+        swvl_new = []
+        water_all = math.reduce_sum(swvl, axis=-1)
+        for i in range(4):
+            ratio = math.divide(swvl[:,i], water_all)
+            water_add = math.multiply(w_b, ratio)
+            swvl_new.append((water_add+swvl[:,i])/soil_depth[i])
+        swvl_new.append(pred[:,4])
+        swvl_new.append(pred[:,5])
+        pred = tf.stack(swvl_new, axis=-1)
+        pred = math.divide(pred-mean, std)
+        return pred
+
+

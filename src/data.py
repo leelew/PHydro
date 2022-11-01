@@ -92,11 +92,11 @@ class Dataset():
                     hydro[i,j,-1] = hydro[i,j,-1]+diff[i,j]
         # get water in
         aux = np.nansum(forcing[:,:,:2], axis=-1)+swvl_prev
-        
         # test mass balance 
+        swvl=0
         for i in range(4):
-            hydro[:, :, i] = hydro[:, :, i]*soil_depth[i]
-        mc_out = np.nansum(hydro, axis=-1)
+            swvl += hydro[:, :, i]*soil_depth[i]
+        mc_out = np.nansum(hydro[:,:,4:], axis=-1)+swvl
         diff = np.nanmean(aux - mc_out) #(nt-1, ngrid)
         print(f'The water budget is {diff}')
         return forcing, hydro, aux #(nt-1, ngrid, nfeat) (nt-1, ngrid)

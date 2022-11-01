@@ -8,7 +8,7 @@ import tensorflow_addons as tfa
 
 from data_gen import load_train_data, load_test_data
 from loss import RMSELoss, MassConserveLoss, RMetrics
-from model import MTLHardLSTM, VanillaLSTM, MTLLSTM
+from model import MTLHardLSTM, VanillaLSTM, MTLLSTM, MTLHardLSTM_v2
 
 
 # NOTE: If we add decorator `tf.function` of `train_step`, and
@@ -41,7 +41,6 @@ def train(x,
           cfg,
           num_repeat,
           num_task=None,
-          resid_idx=None,
           valid_split=True):
     # Prepare for training
     # NOTE: Only use `Adam`, we didn't apply adaptively
@@ -80,8 +79,10 @@ def train(x,
             model = VanillaLSTM(cfg)
         elif cfg["model_name"] in ['multi_tasks', 'soft_multi_tasks']:
             model = MTLLSTM(cfg)
-        else:
+        elif cfg["model_name"] == 'hard_multi_tasks':
             model = MTLHardLSTM(cfg)
+        elif cfg["model_name"] == 'hard_multi_tasks_v2':
+            model = MTLHardLSTM_v2(cfg)
 
         with trange(1, cfg["epochs"]+1) as pbar:
             for epoch in pbar:
@@ -96,15 +97,9 @@ def train(x,
                     # generate batch data
                     x_batch, y_batch, aux_batch, mean_batch, std_batch = \
                         load_train_data(cfg, x, y, aux, scaler)
-                    print(y_batch)
-                    a = y_batch*std_batch+mean_batch
-                    soil_depth = [70, 210, 720, 1864.6]  # mm
-                    a[:,:4] = a[:,:4]*soil_depth
-                    b = np.nansum(a, axis=-1)
-                    print(b)
                     with tf.GradientTape() as tape:
                         # cal MSE loss
-                        if cfg["model_name"] in ['hard_multi_tasks', 'multi_tasks']:
+                        if cfg["model_name"] in ['hard_multi_tasks', 'multi_tasks', 'hard_multi_tasks_v2']:
                             pred = model(x_batch, aux_batch, mean_batch, std_batch, training=True)
                         else:
                             pred = model(x_batch, training=True)
@@ -116,7 +111,7 @@ def train(x,
                                 aux_batch, pred)
                             MCLoss += phy_loss
                         # cal all loss
-                        if cfg["model_name"] in ['single_task', 'multi_tasks', 'hard_multi_tasks']:
+                        if cfg["model_name"] in ['single_task', 'multi_tasks', 'hard_multi_tasks', 'hard_multi_tasks_v2']:
                             loss = mse_loss
                         elif cfg["model_name"] in ["soft_multi_tasks"]:
                             loss = (1-cfg["alpha"])*mse_loss + (cfg["alpha"])*phy_loss
@@ -140,7 +135,6 @@ def train(x,
                     epoch, train_1, train_2, train_3, train_4, train_5, train_6, 
                     MSELoss/cfg["niter"], MCLoss/cfg["niter"], t1-t0)
                 print(loss_str)
-                pbar.set_postfix(loss=train_acc)
 
                 # refresh train if loss equal to NaN
                 # Will build fresh model and re-train it
@@ -162,7 +156,7 @@ def train(x,
                         #       put all valid data into GPU, which exceed memory.
                         t0 = time.time()
                         for i in range(x_valid.shape[0]):
-                            if cfg["model_name"] in ['hard_multi_tasks', 'multi_tasks']:
+                            if cfg["model_name"] in ['hard_multi_tasks', 'multi_tasks', 'multi_tasks', 'hard_multi_tasks_v2']:
                                 pred = model(x_valid[i], aux_valid[i], mean_valid[i], std_valid[i], training=False)
                             else:
                                 pred = model(x_valid[i], training=False)

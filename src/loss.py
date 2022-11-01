@@ -14,9 +14,9 @@ class RMSELoss(Loss):
         self.idx = cfg["resid_idx"]
 
     def call(self, y_true, y_pred):
-        if self.model_name == 'hard_multi_tasks':
-            y_true = tf.gather(y_true, self.sub, axis=-1)
-            y_pred = tf.gather(y_pred, self.sub, axis=-1)
+        #if self.model_name == 'hard_multi_tasks':
+        #    y_true = tf.gather(y_true, self.sub, axis=-1)
+        #    y_pred = tf.gather(y_pred, self.sub, axis=-1)
         mask = y_true == y_true
         y_true = y_true[mask]
         y_pred = y_pred[mask]

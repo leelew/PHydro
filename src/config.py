@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument('--lam', type=int, default=0.01)
 
     # model
-    parser.add_argument('--model_name', type=str, default="multi_tasks")
+    parser.add_argument('--model_name', type=str, default="hard_multi_tasks_v2")
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--niter', type=int, default=100)
