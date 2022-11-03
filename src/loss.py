@@ -1,7 +1,6 @@
 import tensorflow as tf
 from tensorflow import math
 from tensorflow.keras.losses import Loss, mean_squared_error
-import tensorflow_addons as tfa
 from tensorflow.keras.metrics import Metric
 
 
@@ -14,16 +13,16 @@ class RMSELoss(Loss):
         self.idx = cfg["resid_idx"]
 
     def call(self, y_true, y_pred):
-        #if self.model_name == 'hard_multi_tasks':
-        #    y_true = tf.gather(y_true, self.sub, axis=-1)
-        #    y_pred = tf.gather(y_pred, self.sub, axis=-1)
+        if self.model_name == 'hard_multi_tasks_v3':
+            y_true = tf.gather(y_true, self.sub, axis=-1)
+            y_pred = tf.gather(y_pred, self.sub, axis=-1)
         mask = y_true == y_true
         y_true = y_true[mask]
         y_pred = y_pred[mask]
         return math.sqrt(mean_squared_error(y_true, y_pred))
 
 
-class MassConserveLoss(Loss):
+class MassConsLoss(Loss):
     def __init__(self, cfg, mean, std):
         self.mean = mean
         self.std = std
@@ -49,22 +48,24 @@ class MassConserveLoss(Loss):
         return math.multiply(self.scale, math.reduce_mean(phy_loss))
 
 
-
 class RMetrics(Metric):
-    def __init__(self):
+    def __init__(self, cfg):
         super().__init__()
         self.total = self.add_weight('total', initializer='zeros')
         self.count = self.add_weight('count', initializer='zeros')
-
-    def __init__(self):
-        super().__init__()
+        self.model = cfg["model_name"]
 
     def update_state(self, y_true, y_pred):
         y_true = tf.cast(y_true, dtype=tf.float64)
         y_pred = tf.cast(y_pred, dtype=tf.float64)
 
         self.metrics_ = []
-        for i in range(6):
+        if self.model == 'single_task':
+            num_out = 1
+        else:
+            num_out = 6
+
+        for i in range(num_out):
             a,b = y_true[:,i], y_pred[:,i]
             mask = a == a
             a, b = a[mask], b[mask]
@@ -74,9 +75,12 @@ class RMetrics(Metric):
             self.metrics_.append(r2)
 
     def result(self):
-        return {"SWVL_1": self.metrics_[0],
-                "SWVL_2": self.metrics_[1],
-                "SWVL_3": self.metrics_[2],
-                "SWVL_4": self.metrics_[3],
-                "ET": self.metrics_[4],
-                "R": self.metrics_[5]}
+        if self.model == 'single_task':
+            return {"all": self.metrics_[0]}
+        else:
+            return {"SWVL_1": self.metrics_[0],
+                    "SWVL_2": self.metrics_[1],
+                    "SWVL_3": self.metrics_[2],
+                    "SWVL_4": self.metrics_[3],
+                    "ET": self.metrics_[4],
+                    "R": self.metrics_[5]}

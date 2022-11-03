@@ -1,14 +1,11 @@
 import numpy as np
-from sklearn.metrics import r2_score
-
-from model import VanillaLSTM, MTLLSTM
-
+from utils import r2_score
+from model import VanillaLSTM, MTLLSTM, MTLHardLSTM_v1, MTLHardLSTM_v2
 
 
 def eval_single(x, y, scaler, cfg):
-    # get mean, std
-    mean, std = np.array(scaler["y_mean"]), np.array(
-        scaler["y_std"])  # (1, ngrid, 6)
+    # get mean, std (1, ngrid, 6)
+    mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"])  
 
     y_pred_ens = []
     # for each feat
@@ -45,11 +42,10 @@ def eval_single(x, y, scaler, cfg):
     return np.concatenate(y_pred_ens, axis=-1)
 
 
-
-def eval_multi(x, y, scaler, cfg):
+def eval_multi(x, y, aux, scaler, cfg):
+    #FIXME: still have some bugs
     # get mean, std
-    mean, std = np.array(scaler["y_mean"]), np.array(
-        scaler["y_std"])  # (1, ngrid, 6)
+    mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"])  # (1, ngrid, 6)
 
     y_pred_ens = []
     save_folder = cfg["outputs_path"]+"saved_model/" +\
@@ -58,13 +54,21 @@ def eval_multi(x, y, scaler, cfg):
     # for each random seed
     for m in range(cfg["num_repeat"]):
         # load model
-        model = MTLLSTM(cfg)
+        if cfg["model_name"] in ['multi_tasks', 'soft_multi_tasks']:
+            model = MTLLSTM(cfg)
+        elif cfg["model_name"] in ['hard_multi_tasks_v2', 'hard_multi_tasks_v3']:
+            model = MTLHardLSTM_v2(cfg)
+        elif cfg["model_name"] == 'hard_multi_tasks_v1':
+            model = MTLHardLSTM_v1(cfg)
         model.load_weights(save_folder+str(m)+'/')
 
         tmp = []
         # for each grid
         for i in range(x.shape[0]):
-            pred = model(x[i])
+            if cfg["model_name"] in ['single_task', 'multi_tasks', 'soft_multi_tasks']:
+                pred = model(x[i], training=False)
+            else:
+                pred = model(x[i], aux[i], mean[0,i], std[0,i], training=False)
             pred = pred*std[:, i]+mean[:, i]
             tmp.append(pred)
         y_pred_ens.append(np.stack(tmp, axis=0))  # (ngrid, nsample, 6)

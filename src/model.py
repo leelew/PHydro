@@ -4,7 +4,6 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, Layer
 from tensorflow import math
 
 
-
 class VanillaLSTM(Model):
     def __init__(self, cfg):
         super().__init__()
@@ -33,7 +32,7 @@ class MTLLSTM(Model):
         for i in range(cfg["num_out"]):
             self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))
 
-    def call(self, inputs, aux, mean, std):
+    def call(self, inputs):
         x = self.shared_layer(inputs)  # shared layer
         x = self.drop(x)
         pred = []
@@ -110,8 +109,8 @@ class MassConsLayer(Layer):
         return (input_shape[0][0], input_shape[0][1] + 1)
 
 
-class MTLHardLSTM(Model):
-    """LSTM with hard physical constrain through residual layer"""
+class MTLHardLSTM_v2(Model):
+    """LSTM with hard physical constrain through residual layer."""
 
     def __init__(self, cfg):
         super().__init__()
@@ -124,7 +123,6 @@ class MTLHardLSTM(Model):
         for i in range(cfg["num_out"]-1):
             self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))
         self.resid_layer = MassConsLayer(cfg)
-        self.soil_depth = [70, 210, 720, 1864.6]  # mm
 
     def call(self, inputs, aux, mean, std):
         x = self.shared_layer(inputs)
@@ -137,7 +135,8 @@ class MTLHardLSTM(Model):
         return pred
 
 
-class MTLHardLSTM_v2(Model):
+class MTLHardLSTM_v1(Model):
+    """LSTM with hard physical constrain through redistribute layer."""
     def __init__(self, cfg):
         super().__init__()
         self.num_out = cfg["num_out"]
@@ -150,8 +149,6 @@ class MTLHardLSTM_v2(Model):
             self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))
 
     def call(self, inputs, aux, mean, std):
-        soil_depth = [70, 210, 720, 1864.6]  # mm
-
         x = self.shared_layer(inputs)  # shared layer
         x = self.drop(x)
         pred = []
@@ -159,12 +156,13 @@ class MTLHardLSTM_v2(Model):
             pred.append(self.head_layers[i](x))
         pred = tf.concat(pred, axis=-1)
 
+        # redistribute water budget
+        soil_depth = [70, 210, 720, 1864.6]  # mm
         # cal water budget
         pred = math.multiply(pred, std) + mean
         swvl = math.multiply(pred[:, :4], soil_depth)
         pred = tf.concat([swvl, pred[:, 4:]], axis=-1)
         w_b = aux-math.reduce_sum(pred, axis=-1)
-
         # cal ratio
         swvl_new = []
         water_all = math.reduce_sum(swvl, axis=-1)

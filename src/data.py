@@ -1,5 +1,12 @@
-import json
+"""
+Make inputs for all types of models.
 
+<<<<<<<< HEAD
+Author: Lu Li 
+11/1/2022 - First edition
+"""
+
+import json
 import numpy as np
 
 
@@ -15,11 +22,10 @@ class Dataset():
         self.mode = mode
 
     def fit(self):
-        # load input data (nt, ngrid, nfeat)
+        # load input data [nt,ngrid,...]
         forcing, hydro, ancillary = self._load_input()
-        ancillary = self._spatial_normalize(ancillary)
 
-        # Correct water balance
+        # Correct water balance [nt-1,ngrid,...]
         # NOTE: CoLM soil moisture is available as mean of
         #       day, however, the delta(swc) in water balance
         #       should be swc(24)-swc(0). Thus we need to
@@ -28,58 +34,61 @@ class Dataset():
         forcing, hydro, aux = self._correct_mass_conserve(forcing, hydro)
 
         # remove unreasonable runoff
-        # NOTE: 30mm/day may not be the best setting,
-        #       but we didn't found a better way to
-        #       remove unreasonable runoff.
+        # NOTE: 30mm/day may not be the best setting, but we didn't 
+        #       found a better way to remove unreasonable runoff.
         hydro = self._remove_outlier(hydro, threshold=30)
 
         # get scaler
         if self.mode == 'train':
             scaler = self._get_z_scaler(forcing, hydro)
             self._save_scaler(self.inputs_path, scaler)
-        else:
+        elif self.mode == 'test':
             # NOTE: ensure data is fitted in train mode before
             scaler = self._load_scaler(self.inputs_path)
 
-        # normalize input for train/valid/test
-        # NOTE: Z-score normalize is much better than
-        #       minmax normalize based on prelinminary test.
-        #forcing = self._minmax_normalize(forcing, scaler, is_feat=True)
+        # normalize input 
+        # NOTE: Z-score normalize is much better than minmax 
+        #       normalize based on prelinminary test.
         forcing = self._z_normalize(forcing, scaler, is_feat=True)
 
-        # normalize output (for train dataset)
+        # normalize output (only for train dataset)
         if self.mode == 'train':
             hydro = self._z_normalize(hydro, scaler, is_feat=False)
 
-        # (Option) add ancillary
+        # (Optional) add spatial normalized ancillary data
         if self.use_ancillary:
-            ancillary = np.tile(
-                ancillary[np.newaxis], (forcing.shape[0], 1, 1))
+            ancillary = self._spatial_normalize(ancillary)
+            ancillary = np.tile(ancillary[np.newaxis],(forcing.shape[0],1,1))
             forcing = np.concatenate([forcing, ancillary], axis=-1)
+
+        # trans nt and ngrid [ngrid, nt, nfeat]
+        forcing = np.transpose(forcing, (1, 0, 2))
+        hydro = np.transpose(hydro, (1, 0, 2))
+        aux = np.transpose(aux, (1, 0))
 
         # make training/test data
         if self.mode == 'train':
-            return np.transpose(forcing, (1, 0, 2)), \
-                np.transpose(hydro, (1, 0, 2)), \
-                np.transpose(aux, (1, 0))
-        else:
-            x_test, y_test, aux_test = self._make_inference_data(
-                forcing, hydro, aux, self.seq_len, 1, self.window_size)
-            return x_test, y_test, aux_test
+            return forcing, hydro, aux
+        elif self.mode == 'test':
+            forcing, hydro, aux = self._make_inference_data(forcing, hydro, aux, self.seq_len)
+            return forcing, hydro, aux
 
+    def _load_input(self):
+        forcing = np.load(self.inputs_path+"forcing_gd_9km_{}.npy".format(self.mode))
+        hydro = np.load(self.inputs_path+"hydro_gd_9km_{}.npy".format(self.mode))
+        ancillary = np.load(self.inputs_path+"ancil_gd_9km.npy")
+        return forcing, hydro, ancillary
 
     def _correct_mass_conserve(self, forcing, hydro):
         soil_depth = [70, 210, 720, 1864.6]  # mm
-        hydro_prev, hydro =  hydro[:-1], hydro[1:]
-        forcing = forcing[1:]
-        swvl = 0
-        swvl_prev = 0
+        hydro_prev, hydro, forcing = hydro[:-1], hydro[1:], forcing[1:]
+        swvl, swvl_prev = 0, 0
         for i in range(4):
             swvl += hydro[:, :, i]*soil_depth[i]
             swvl_prev += hydro_prev[:,:,i]*soil_depth[i]
-        mc_in = np.nansum(forcing[:,:,:2], axis=-1)+swvl_prev
+        mc_in = np.nansum(forcing[:,:,:2], axis=-1) + swvl_prev
         mc_out = swvl + np.nansum(hydro[:,:,4:], axis=-1)
-        diff = mc_in - mc_out #(nt-1, ngrid)
+        diff = mc_in - mc_out
 
         # if diff>0, then add to runoff;
         # if diff<0, then add to precipitation;
@@ -90,27 +99,11 @@ class Dataset():
                     forcing[i,j,0] = forcing[i,j,0]-diff[i,j]
                 else:
                     hydro[i,j,-1] = hydro[i,j,-1]+diff[i,j]
-        # get water in
-        aux = np.nansum(forcing[:,:,:2], axis=-1)+swvl_prev
-        # test mass balance 
-        swvl=0
-        for i in range(4):
-            swvl += hydro[:, :, i]*soil_depth[i]
-        mc_out = np.nansum(hydro[:,:,4:], axis=-1)+swvl
-        diff = np.nanmean(aux - mc_out) #(nt-1, ngrid)
-        print(f'The water budget is {diff}')
-        return forcing, hydro, aux #(nt-1, ngrid, nfeat) (nt-1, ngrid)
+        # get mass in
+        aux = np.nansum(forcing[:,:,:2], axis=-1) + swvl_prev
+        return forcing, hydro, aux 
 
-    def _load_input(self):
-        forcing = np.load(self.inputs_path +
-                          "guangdong_9km_forcing_{}.npy".format(self.mode))
-        hydro = np.load(self.inputs_path +
-                        "guangdong_9km_hydrology_{}.npy".format(self.mode))
-        ancillary = np.load(self.inputs_path +
-                            "guangdong_9km_ancillary.npy")
-        return forcing, hydro, ancillary
-
-    def _remove_outlier(self, hydro, threshold=200):  # (nt, ngrids, nfeat)
+    def _remove_outlier(self, hydro, threshold=30):
         """
         std = np.nanstd(input, axis=(0), keepdims=True)  # (1, ngrids, nfeat)
         mean = np.nanmean(input, axis=(0), keepdims=True)  # (1, ngrids, nfeat)
@@ -118,7 +111,6 @@ class Dataset():
         input[np.where(input < (mean-3*std))] = np.nan
         self.remove_outlier = True
         """
-
         """
         # @(Zhongwang Wei): remove unreasonable runoff > 200mm/day and
         # interplote by adjacency two days
@@ -139,13 +131,12 @@ class Dataset():
             rnof[:, i] = tmp
         hydro[:, :, -1] = rnof
         """
-
         rnof = hydro[:, :, -1]
         rnof[rnof > threshold] = np.nan
         hydro[:, :, -1] = rnof
         return hydro
 
-    def _get_minmax_scaler(self, x, y):  # (nt, ngrids, nfeat) - (1, ngrids, nfeat)
+    def _get_minmax_scaler(self, x, y):
         scaler = {}
         scaler["x_min"] = np.nanmin(x, axis=(0), keepdims=True).tolist()
         scaler["x_max"] = np.nanmax(x, axis=(0), keepdims=True).tolist()
@@ -179,12 +170,6 @@ class Dataset():
                 np.array(scaler["y_std"]))
         return input
 
-    def _spatial_normalize(self, static):
-        # (ngrid, nfeat) for static data
-        mean = np.nanmean(static, axis=(0), keepdims=True)
-        std = np.nanstd(static, axis=(0), keepdims=True)
-        return (static-mean)/std
-
     def _minmax_normalize(self, input, scaler, is_feat):
         """normalize features using pre-computed statistics."""
         if is_feat:
@@ -195,20 +180,36 @@ class Dataset():
                 np.array(scaler["y_max"])-np.array(scaler["y_min"]))
         return input
 
-    def _make_inference_data(self, X, y, aux=None, seq_len=365, interval=1, window_size=0):
+    def _spatial_normalize(self, static):
+        # (ngrid, nfeat) for static data
+        mean = np.nanmean(static, axis=(0), keepdims=True)
+        std = np.nanstd(static, axis=(0), keepdims=True)
+        return (static-mean)/std
+
+    def _make_inference_data(self, 
+                             x, 
+                             y, 
+                             aux, 
+                             seq_len=365, 
+                             interval=1, 
+                             window_size=0):
         x_, y_, aux_ = [], [], []
-        for i in range(X.shape[1]):  # parfor each grids
+        for i in range(x.shape[0]): 
             tmpx, tmpy, tmp_aux = self._reshape_1d_data(
-                X[:, i], y[:, i], aux[:, i], seq_len, interval, window_size)  # (nt, nfeat)
+                x[i], y[i], aux[i], seq_len, interval, window_size) 
             x_.append(tmpx)
             y_.append(tmpy)
             aux_.append(tmp_aux)
-        x_ = np.stack(x_, axis=0)
-        y_ = np.stack(y_, axis=0)
-        aux_ = np.stack(aux_, axis=0)
-        return x_, y_, aux_  # (ngrids, nsamples, seq_len, nfeat)
+        # (ngrids, nsamples, seq_len, nfeat)
+        return np.stack(x_, axis=0), np.stack(y_, axis=0), np.stack(aux_, axis=0) 
 
-    def _reshape_1d_data(self, X, y, aux=None, seq_length=365, interval=365, window_size=0):
+    def _reshape_1d_data(self, 
+                         x, 
+                         y, 
+                         aux, 
+                         seq_len=365, 
+                         interval=1,
+                         window_size=0):
         """reshape data into LSTM many-to-one input samples
 
         Parameters
@@ -233,21 +234,20 @@ class Dataset():
         y_new: np.ndarray
             The target value for each sample in x_new
         """
-        num_samples, num_features = X.shape
+        num_samples, num_features = x.shape
         _, num_out = y.shape
-        n = (num_samples-seq_length+1) // interval
-
-        x_new = np.zeros((n, seq_length, num_features))*np.nan
+        n = (num_samples-seq_len+1) // interval
+        x_new = np.zeros((n, seq_len, num_features))*np.nan
         y_new = np.zeros((n, num_out))*np.nan
-        aux_new = np.zeros((n, 2))*np.nan
+        aux_new = np.zeros((n, ))*np.nan
 
         for i in range(n):
-            x_new[i] = X[i*interval:i*interval+seq_length]
-            y_new[i] = y[i*interval+seq_length-1]
-            aux_new[i] = aux[i*interval+seq_length-1]
+            x_new[i] = x[i*interval:i*interval+seq_len]
+            y_new[i] = y[i*interval+seq_len-1]
+            aux_new[i] = aux[i*interval+seq_len-1]
         return x_new, y_new, aux_new
 
-    def _split_into_batch(self, X, y, seq_len=365, offset=1, window_size=0):
+    def __split_into_batch(self, X, y, seq_len=365, offset=1, window_size=0):
         """split training data into batches with size of batch_size
 
         Params
@@ -274,6 +274,3 @@ class Dataset():
         # (seq_len,ngrid*nyears*1/offset,nfeat)
         y_batchs = np.concatenate(y_batchs, axis=1)
         return np.transpose(x_batchs, (1, 0, 2)), np.transpose(y_batchs, (1, 0, 2))
-
-    def __len__(self):
-        return self.nt

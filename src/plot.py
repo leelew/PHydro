@@ -2,16 +2,79 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from mpl_toolkits.axes_grid1.inset_locator import mark_inset, zoomed_inset_axes
 from mpl_toolkits.basemap import Basemap
+import numpy as np
+from config import parse_args
 
+cfg = parse_args()
+# ---------------------------------
+# Figure 1
+# ---------------------------------
+path = cfg["outputs_path"]+'forecast/'
+r2_single_task = np.load(path+"single_task_epoch_200/r2_single_task.npy")
+r2_multi_tasks = np.load(path+"multi_tasks_epoch_200/r2_multi_tasks.npy")
 
+phy_single_task = np.load(path+"single_task_epoch_200/phy_cons_single_task.npy")
+phy_multi_tasks = np.load(path+"multi_tasks_epoch_200/phy_cons_multi_tasks.npy")
+
+r2_st, r2_mt = [], []
+phy_st, phy_mt = [], []
+for i in range(6):
+    temp = r2_multi_tasks[:,:,i].reshape(-1, )
+    temp = np.delete(temp, np.isnan(temp))
+    print(temp)
+    r2_mt.append(temp)
+    temp = r2_single_task[:,:,i].reshape(-1, )
+    temp = np.delete(temp, np.isnan(temp))    
+    r2_st.append(temp)
+
+temp = phy_multi_tasks.reshape(-1, )
+temp = np.delete(temp, np.isnan(temp))
+phy_mt.append(temp)
+temp = phy_single_task.reshape(-1, )
+temp = np.delete(temp, np.isnan(temp))    
+phy_st.append(temp)
 
 #figure
 fig = plt.figure()
-ax = plt.subplot(111)
-ax.spines['left'].set_linewidth(1)
-ax.spines['bottom'].set_linewidth(1)
-ax.spines['right'].set_linewidth(1)
-ax.spines['top'].set_linewidth(1)
+ax = plt.subplot(211)
+ax.spines['left'].set_linewidth(2)
+ax.spines['bottom'].set_linewidth(2)
+ax.spines['right'].set_linewidth(2)
+ax.spines['top'].set_linewidth(2)
+ax.boxplot(r2_st,
+            notch=True,
+            patch_artist=True,
+            showfliers=False,
+            positions=[0, 1, 2, 3, 4, 5],
+            boxprops=dict(facecolor='lightblue', color='black'))
+ax.boxplot(r2_mt,notch=True,
+            patch_artist=True,
+            showfliers=False,
+            positions=[0.5, 1.5, 2.5, 3.5, 4.5, 5.5],
+            boxprops=dict(facecolor='red', color='black'))
+
+ax = plt.subplot(212)
+ax.spines['left'].set_linewidth(2)
+ax.spines['bottom'].set_linewidth(2)
+ax.spines['right'].set_linewidth(2)
+ax.spines['top'].set_linewidth(2)
+ax.boxplot(phy_st,
+            notch=True,
+            patch_artist=True,
+            showfliers=False,
+            positions=[0],
+            boxprops=dict(facecolor='lightblue', color='black'))
+ax.boxplot(phy_mt,notch=True,
+            patch_artist=True,
+            showfliers=False,
+            positions=[0.5],
+            boxprops=dict(facecolor='red', color='black'))
+plt.savefig('figure1.pdf')
+print('Figure 1 completed!')
+
+
+
+"""
 m = Basemap(projection='mill',
         llcrnrlat=lat_min-1, urcrnrlat=lat_max+1,
         llcrnrlon=lon_min-1, urcrnrlon=lon_max+1,
@@ -64,3 +127,4 @@ for i in range(cfg["num_out"]):
     plt.legend(['single_task','CoLM'])
 
 plt.savefig("figure3.pdf")
+"""

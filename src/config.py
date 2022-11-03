@@ -10,7 +10,7 @@ def parse_args():
     parser.add_argument('--work_path', type=str, default="/data/lilu/PHydro")
 
     # data
-    parser.add_argument('--reuse_input', type=bool, default=True)
+    parser.add_argument('--reuse_input', type=bool, default=False)
     parser.add_argument('--use_ancillary', type=bool, default=True)
     parser.add_argument('--seq_len', type=int, default=365)
     parser.add_argument('--interval', type=int, default=365)
@@ -21,9 +21,9 @@ def parse_args():
     parser.add_argument('--lam', type=int, default=0.01)
 
     # model
-    parser.add_argument('--model_name', type=str, default="hard_multi_tasks_v2")
+    parser.add_argument('--model_name', type=str, default="hard_multi_tasks_v1")
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--epochs', type=int, default=200)
+    parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--niter', type=int, default=100)
     parser.add_argument('--hidden_size', type=int, default=64)
     parser.add_argument('--alpha', type=float, default=0.5)
