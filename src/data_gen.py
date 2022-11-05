@@ -14,7 +14,7 @@ import numpy as np
 #       Kratzert et al. (2019), HESS is better.    
 #  
 # Fang and Shen (2020), JHM 
-def load_train_data(cfg, x, y, aux=None, scaler=None):
+def load_train_data(cfg, x, y, aux, scaler):
     ngrid, nt, _ = x.shape
     mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"])
     idx_grid = np.random.randint(0, ngrid, cfg["batch_size"])
@@ -31,7 +31,7 @@ def load_test_data(cfg, x, y, aux, scaler):
     ngrid, nt, _ = x.shape
     n = (nt-cfg["seq_len"]+1)
     x_new = np.zeros((ngrid, n, cfg["seq_len"], cfg["num_feat"]))*np.nan
-    y_new = np.zeros((ngrid, n, cfg["num_out"]))*np.nan
+    y_new = np.zeros((ngrid, n, y.shape[-1]))*np.nan
     aux_new = np.zeros((ngrid, n))*np.nan
     mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"]) #(1, ngrid, nout)
     mean = np.transpose(mean, (1,0,2))

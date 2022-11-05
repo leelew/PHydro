@@ -22,10 +22,10 @@ mode = 'test'
 # ------------------------------------------------------------------------------
 in_shape_idx = np.load(inputs_path+"guangdong_9km_shapefile.npy")
 idx = np.where(in_shape_idx == 1)[0]
+# FIXME: Remove grids contains all NaN automatically
 idx1 = np.delete(idx, [1220,1544,1550,1563])
 
 
-"""
 # codes for extract guangdong points
 with xr.open_dataset(PATH+"CoLM/global_MSWX_9km_hist_2000-01.nc", decode_times=False) as f:
     lat, lon = np.array(f.lat), np.array(f.lon)
@@ -47,9 +47,9 @@ for i, pt in enumerate(flat_points):
         count += 1
 idx = np.where(in_shape_idx == 1)[0]
 np.save("guangdong_9km_shapefile.npy", in_shape_idx)
-"""
 
-"""
+
+
 # ------------------------------------------------------------------------------
 # read CoLM hydrology & forcing variables
 # ------------------------------------------------------------------------------
@@ -138,6 +138,6 @@ np.save("guangdong_9km_ancillary.npy", static)
 # move to input path
 # ------------------------------------------------------------------------------
 os.system("mv {} {}".format('guangdong*npy', inputs_path))
-"""
+
 
 
