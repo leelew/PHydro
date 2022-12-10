@@ -44,6 +44,8 @@ def postprocess(cfg):
                 a = np.delete(a, np.isnan(a))
                 urmse[i, t] = unbiased_rmse(a, b)
                 r2[i, t] = r2_score(a, b)
+    
+    print(np.nanmedian(r2, axis=0))
 
     # cal physical consistency
     phy_cons = cal_phy_cons(aux_test, y_pred, y_test)

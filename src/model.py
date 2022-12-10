@@ -1,112 +1,140 @@
+"""
+All model structure
+
+<<<<<<<< HEAD
+Author: Lu Li 
+11/1/2022 - V1.0
+12/9/2022 - V2.0
+"""
+
 import tensorflow as tf
-from tensorflow.keras import Model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Layer
 from tensorflow import math
+from tensorflow.keras import Model
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+
+from utils import make_CoLM_soil_depth
+from layers import WeightedMultiLossLayer, MassConsLayer
 
 
-class VanillaLSTM(Model):
+
+class STModel(Model):
+    """single task model"""
+
     def __init__(self, cfg):
         super().__init__()
-        self.lstm = LSTM(cfg["hidden_size"], return_sequences=False)
+        self.lstm = LSTM(cfg["hidden_size"], return_sequences=True)
         self.drop = Dropout(cfg["dropout_rate"])
         self.dense = Dense(1)
 
     def call(self, inputs):
         x = self.lstm(inputs)
         x = self.drop(x)
-        x = self.dense(x)
+        # we only predict the last two steps
+        x = self.dense(x[:,-2:]) 
         return x
 
 
-class MTLLSTM(Model):
-    """LSTM with multi-tasks"""
+class MTLModel_v1(Model):
+    """multitasks model with average loss"""
 
     def __init__(self, cfg):
         super().__init__()
         self.num_out = cfg["num_out"]
-        self.shared_layer = LSTM(cfg["hidden_size"],
-                                 return_sequences=False,
-                                 name='shared_layer')
+        self.shared_layer = LSTM(cfg["hidden_size"], return_sequences=True)
         self.drop = Dropout(cfg["dropout_rate"])
         self.head_layers = []
         for i in range(cfg["num_out"]):
-            self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))
+            self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))     
 
     def call(self, inputs):
         x = self.shared_layer(inputs)  # shared layer
         x = self.drop(x)
         pred = []
         for i in range(self.num_out):  # each heads
-            pred.append(self.head_layers[i](x))
+            pred.append(self.head_layers[i](x[:,-2:]))
         pred = tf.concat(pred, axis=-1)
         return pred
 
 
-class MassConsLayer(Layer):
-    """Mass conserve layer"""
+class MTLModel_v2(Model):
+    """multitasks model with adaptive loss"""
 
     def __init__(self, cfg):
         super().__init__()
-        self.idx = cfg["resid_idx"]
         self.num_out = cfg["num_out"]
+        self.shared_layer = LSTM(cfg["hidden_size"], return_sequences=True)
+        self.drop = Dropout(cfg["dropout_rate"])
+        self.head_layers = []
+        for i in range(cfg["num_out"]):
+            self.head_layers.append(Dense(1, name='head_layer_'+str(i+1))) 
+        self.loss_layer = WeightedMultiLossLayer(cfg) 
 
-    def _fill_matrix(self, x, idx, res=None):
-        if res is not None:
-            empty = res
-        else:
-            empty = x[:, 0:1]
-        if idx == 0:
-            x = tf.concat([empty, x], axis=-1)
-        elif idx == self.num_out:
-            x = tf.concat([x, empty], axis=-1)
-        else:
-            x = tf.concat([x[:, :idx], empty, x[:, idx+1:]], axis=-1)
-        return x
+    def call(self, inputs, y_true=None):
+        x = self.shared_layer(inputs)  # shared layer
+        x = self.drop(x)
+        pred = []
+        for i in range(self.num_out):  # each heads
+            pred.append(self.head_layers[i](x[:,-2:]))
+        pred = tf.concat(pred, axis=-1)
 
-    def _slice_matrix(self, x, idx):
-        if idx == 0:
-            x = x[:, 1:]
-        elif idx == self.num_out:
-            x = x[:, :-1]
-        else:
-            x = tf.concat([x[:, :idx], x[:, idx+1:]], axis=-1)
-        return x
+        if y_true is not None: # train mode
+            #FIXME: Only cal loss on last step
+            loss_sum = self.loss_layer(y_true, pred)
+            return pred, loss_sum
+        else: # inference mode
+            return pred
+
+
+class HardMTLModel_v1(Model):
+    """multitasks model with hard physical constrain through redistribute layer."""
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.num_out = cfg["num_out"]
+        self.shared_layer = LSTM(cfg["hidden_size"],return_sequences=True)
+        self.drop = Dropout(cfg["dropout_rate"])
+        self.head_layers = []
+        for i in range(cfg["num_out"]):
+            self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))
 
     def call(self, inputs, aux, mean, std):
-        """
-        Args
-        ----
-            inputs: Directly outputs of multi-task models. Notably,
-                    it's z-score normalized value, and if we want
-                    to predict N vars, it only contains (N-1) vars.
-        """
-        # init
-        inputs = tf.cast(inputs, 'float32')
-        aux = tf.cast(aux, 'float32')
-        mean = tf.cast(mean, 'float32')
-        std = tf.cast(std, 'float32')
-        soil_depth = [70, 210, 720, 1864.6]  # mm
-        # Concat empty tensor to inputs based on idx (batch, nout)
-        inputs = self._fill_matrix(inputs, self.idx)
-        # reverse normalized forecasts
-        inputs = math.multiply(inputs, std) + mean
-        # Transform soil moisture in unit mm
-        swvl = math.multiply(inputs[:, :4], soil_depth)
-        # unnormalized all mm/day
-        inputs = tf.concat([swvl, inputs[:, 4:]], axis=-1)
-        # Calculate residual outputs
-        inputs = self._slice_matrix(inputs, self.idx)
-        mass_resid = aux-math.reduce_sum(inputs, axis=-1)
-        mass_resid = mass_resid[:, tf.newaxis]
-        # Output
-        inputs = self._fill_matrix(inputs, self.idx, mass_resid)
-        swvl = tf.divide(inputs[:, :4], soil_depth)  # mm3/mm3
-        inputs = tf.concat([swvl, inputs[:, 4:]], axis=-1)
-        inputs = math.divide(inputs-mean, std)
-        return inputs
+        x = self.shared_layer(inputs)  # shared layer
+        x = self.drop(x)
+        pred = []
+        for i in range(self.num_out):  # each heads
+            pred.append(self.head_layers[i](x[:,-2:]))
+        pred = tf.concat(pred, axis=-1) #(b, 2, 6)
 
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0][0], input_shape[0][1] + 1)
+        # -------------------------
+        # redistribute water budget
+        # -------------------------
+        depth, zi = make_CoLM_soil_depth() # m/cm
+        soil_depth = [70, 210, 720, 10*(zi[9]-100)] # mm 
+        pred_prev_save, pred_now = pred[:,0], pred[:,1]  #(b,6)
+        pred_prev = math.multiply(pred_prev_save, std) + mean
+        pred_now = math.multiply(pred_now, std) + mean
+        print(tf.shape(pred_prev))
+
+        # cal water budget
+        swvl_prev = math.multiply(pred_prev[:,:4], soil_depth) # (b,4)
+        swvl_now = math.multiply(pred_now[:,:4], soil_depth) # (b,4)
+        delta_swvl = math.reduce_sum(swvl_now-swvl_prev, axis=-1) #(b,)
+        w_b = aux-delta_swvl-pred_now[:,-2]-pred_now[:,-1] #(b,)
+
+        # cal ratio and distribute
+        pred_new = []
+        w_a = math.reduce_sum(swvl_now, axis=-1) #(b)
+        for i in range(4):
+            ratio = math.divide(swvl_now[:,i], w_a)
+            water_add = math.multiply(w_b, ratio)
+            pred_new.append((water_add+swvl_now[:,i])/soil_depth[i])
+        pred_new.append(pred_now[:,-2])
+        pred_new.append(pred_now[:,-1])
+        pred_new = tf.stack(pred_new, axis=-1) #(b,6)
+        pred_new = math.divide(pred_new-mean, std)
+        pred = tf.stack([pred_prev_save, pred_new], axis=1) #(b,2,6)
+        print(tf.shape(pred))
+        return pred #(b,2,6)
 
 
 class MTLHardLSTM_v2(Model):
@@ -135,45 +163,5 @@ class MTLHardLSTM_v2(Model):
         return pred
 
 
-class MTLHardLSTM_v1(Model):
-    """LSTM with hard physical constrain through redistribute layer."""
-    def __init__(self, cfg):
-        super().__init__()
-        self.num_out = cfg["num_out"]
-        self.shared_layer = LSTM(cfg["hidden_size"],
-                                 return_sequences=False,
-                                 name='shared_layer')
-        self.drop = Dropout(cfg["dropout_rate"])
-        self.head_layers = []
-        for i in range(cfg["num_out"]):
-            self.head_layers.append(Dense(1, name='head_layer_'+str(i+1)))
-
-    def call(self, inputs, aux, mean, std):
-        x = self.shared_layer(inputs)  # shared layer
-        x = self.drop(x)
-        pred = []
-        for i in range(self.num_out):  # each heads
-            pred.append(self.head_layers[i](x))
-        pred = tf.concat(pred, axis=-1)
-
-        # redistribute water budget
-        soil_depth = [70, 210, 720, 1864.6]  # mm
-        # cal water budget
-        pred = math.multiply(pred, std) + mean
-        swvl = math.multiply(pred[:, :4], soil_depth)
-        pred = tf.concat([swvl, pred[:, 4:]], axis=-1)
-        w_b = aux-math.reduce_sum(pred, axis=-1)
-        # cal ratio
-        swvl_new = []
-        water_all = math.reduce_sum(swvl, axis=-1)
-        for i in range(4):
-            ratio = math.divide(swvl[:,i], water_all)
-            water_add = math.multiply(w_b, ratio)
-            swvl_new.append((water_add+swvl[:,i])/soil_depth[i])
-        swvl_new.append(pred[:,4])
-        swvl_new.append(pred[:,5])
-        pred = tf.stack(swvl_new, axis=-1)
-        pred = math.divide(pred-mean, std)
-        return pred
 
 

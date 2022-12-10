@@ -27,19 +27,19 @@ def load_train_data(cfg, x, y, aux, scaler):
     return x, y, aux, mean, std
 
 
-def load_test_data(cfg, x, y, aux, scaler):
+def load_test_data(cfg, x, y, aux, scaler, stride=1):
     ngrid, nt, _ = x.shape
-    n = (nt-cfg["seq_len"]+1)
+    n = (nt-cfg["seq_len"]+1)//stride
     x_new = np.zeros((ngrid, n, cfg["seq_len"], cfg["num_feat"]))*np.nan
     y_new = np.zeros((ngrid, n, y.shape[-1]))*np.nan
     aux_new = np.zeros((ngrid, n))*np.nan
-    mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"]) #(1, ngrid, nout)
+    mean, std = np.array(scaler["y_mean"]), np.array(scaler["y_std"])
     mean = np.transpose(mean, (1,0,2))
     std = np.transpose(std, (1,0,2))
     for i in range(n):
-        x_new[:,i] = x[:,i:i+cfg["seq_len"]]
-        y_new[:,i] = y[:,i+cfg["seq_len"]-1]
-        aux_new[:,i] = aux[:,i+cfg["seq_len"]-1]   
+        x_new[:,i] = x[:,i*stride:i*stride+cfg["seq_len"]]
+        y_new[:,i] = y[:,i*stride+cfg["seq_len"]-1]
+        aux_new[:,i] = aux[:,i*stride+cfg["seq_len"]-1]   
     return x_new, y_new, aux_new, np.tile(mean, (1, n, 1)), np.tile(std, (1,n,1))
 
 
