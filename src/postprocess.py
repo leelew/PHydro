@@ -1,68 +1,60 @@
 import os
-import numpy as np
-from sklearn.metrics import r2_score
 
-from utils import site2grid, cal_phy_cons, unbiased_rmse
+import numpy as np
+from sklearn.metrics import r2_score, mean_squared_error
+
 from config import parse_args
+from utils import cal_phy_cons, site2grid, unbiased_rmse
 
 
 def postprocess(cfg):
-    # load forecast and observation (ngrid, nt, nout)
+    # load forecast (ngrid, nt, 2, nout)
     path = cfg["outputs_path"]+'forecast/'+cfg["model_name"]+'/'
     y_pred = np.load(path+cfg["model_name"]+'_gd_9km.npy')
-    path = cfg["inputs_path"]
-    y_test = np.load(path+'y_test.npy')
-    aux_test = np.load(path+'z_test.npy')
+
+    # load observation (ngrid, nt, nout)
+    y_test = np.load(cfg["outputs_path"]+'forecast/obs_gd_9km.npy')
+    aux_test = np.load(cfg["outputs_path"]+'forecast/aux_gd_9km.npy')
+
+    y_test = y_test[:,-731:,:]
+    y_pred = y_pred[:,-731:,:]
+    aux_test = aux_test[:,-731:]
     print(y_pred.shape, y_test.shape, aux_test.shape)
 
     # get shape
-    ngrids, nt, nfeat = y_pred.shape
-
-    # load site and grid lon/lat
-    attr = np.load(path+"coord_gd_9km.npy")
-    lon_min, lat_min = np.nanmin(attr, axis=0)
-    lon_max, lat_max = np.nanmax(attr, axis=0)
-    ease_9km_grids = np.load(path+"coord_global_9km.npy") #(1800, 3600, 2)
-    lon, lat = ease_9km_grids[0,:,0], ease_9km_grids[:,0,1]
-    idx_lat = np.where((lat>=lat_min) & (lat<=lat_max))
-    idx_lon = np.where((lon>=lon_min) & (lon<=lon_max))
-    lon_gd = lon[idx_lon]
-    lat_gd = lat[idx_lat]
-    grid_lon, grid_lat = np.meshgrid(lon_gd, lat_gd)
+    ngrids, nt, _, nfeat = y_pred.shape
 
     # cal perf
     r2 = np.full((ngrids, nfeat), np.nan)
     urmse = np.full((ngrids, nfeat), np.nan)
+    r = np.full((ngrids, nfeat), np.nan)
     for i in range(ngrids):
         for t in range(nfeat):
+            print(i)
             if not (np.isnan(y_test[i, :, t]).any()):
-                urmse[i, t] = unbiased_rmse(y_test[i, :, t], y_pred[i, :, t])
-                r2[i, t] = r2_score(y_test[i, :, t], y_pred[i, :, t])
+                a, b = y_test[i,:,t], y_pred[i,:,-1,t]
+                a = np.delete(a, np.isnan(b))
+                b = np.delete(b, np.isnan(b))
+                urmse[i, t] = unbiased_rmse(a, b)
+                r2[i, t] = r2_score(a, b)
+                r[i, t] = np.corrcoef(a, b)[0,1]
             else:
-                a, b = y_test[i,:,t], y_pred[i,:,t]
+                a, b = y_test[i,:,t], y_pred[i,:,-1,t]
                 b = np.delete(b, np.isnan(a))
                 a = np.delete(a, np.isnan(a))
                 urmse[i, t] = unbiased_rmse(a, b)
                 r2[i, t] = r2_score(a, b)
+                r[i, t] = np.corrcoef(a, b)[0,1]
+
+    # cal overall perf
+    print(y_pred.shape, y_test.shape, aux_test.shape)
 
     # cal physical consistency
-    phy_cons = cal_phy_cons(aux_test, y_pred, y_test)
+    phy_cons, w_b = cal_phy_cons(y_pred, aux_test)
     
-    # turn r2, urmse, physical consist, y_pred, y_test to grids
-    phy_cons_grid = site2grid(phy_cons, attr[:,1], attr[:,0], lat_gd, lon_gd)
-    r2_grid = site2grid(r2, attr[:,1], attr[:,0], lat_gd, lon_gd)
-    urmse_grid = site2grid(urmse, attr[:,1], attr[:,0], lat_gd, lon_gd)
-    y_pred_ = site2grid(y_pred, attr[:,1], attr[:,0], lat_gd, lon_gd)
-    y_test_ = site2grid(y_test, attr[:,1], attr[:,0], lat_gd, lon_gd)
-
-    # save
-    np.save('r2_'+cfg["model_name"]+'.npy', r2_grid)
-    np.save('urmse_'+cfg["model_name"]+'.npy', urmse_grid)
-    np.save('y_pred_'+cfg["model_name"]+'.npy', y_pred_)
-    np.save('y_test_'+cfg["model_name"]+'.npy', y_test_)
-    np.save('phy_cons_'+cfg["model_name"]+'.npy', phy_cons_grid)
-    path = cfg["outputs_path"]+'forecast/'+cfg["model_name"]+'/'
-    print(path)
+    np.save('perf_'+cfg["model_name"]+'.npy',np.stack([r, r2, urmse], axis=0))
+    np.save('phy_cons_'+cfg["model_name"]+'.npy',phy_cons)
+    np.save('w_b_'+cfg["model_name"]+'.npy',w_b)
     os.system('mv {} {}'.format('*.npy', path))
 
 
